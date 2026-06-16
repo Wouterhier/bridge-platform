@@ -14,10 +14,20 @@ describe("validateEmail", () => {
     expect(result.error).toBe("fake_domain");
   });
 
-  it("rejects AI-mutated andrea+9@romea.ai", () => {
+  it("accepts plus-addressed jane+clinic@gmail.com", () => {
+    const result = validateEmail("jane+clinic@gmail.com");
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("jane+clinic@gmail.com");
+  });
+
+  it("accepts raw patient input andrea+9@romea.ai (format is valid, domain is not blocked)", () => {
+    // The old bug was the AI mutating andrea@romea.ai into andrea+9@romea.ai.
+    // That is now prevented at the engine/state-machine level by running the
+    // validator against the patient's raw message. If the patient actually
+    // typed this plus-address, it is a valid email.
     const result = validateEmail("andrea+9@romea.ai");
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("suspicious_email");
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("andrea+9@romea.ai");
   });
 
   it("accepts valid email", () => {

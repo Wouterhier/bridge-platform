@@ -8,9 +8,13 @@ const FAKE_DOMAINS = new Set([
   "selfcaremen.booking",
 ]);
 
+// AI-mutation defense is in the state machine engine: this validator runs
+// against the patient's raw message, not the AI's output. We only validate
+// format and block fake domains here. Plus-addressing (local+tag@domain) is
+// valid and must not be rejected.
+//
 // Robust but not over-engineered RFC-ish local-part regex.
-// We explicitly reject `+` suffixes separately.
-const EMAIL_LOCAL_PART_RE = /^[a-zA-Z0-9!#$%&'*\/=?^_`{|}~.-]+$/;
+const EMAIL_LOCAL_PART_RE = /^[a-zA-Z0-9!#$%&'*+\/=?^_`{|}~.-]+$/;
 const EMAIL_DOMAIN_RE =
   /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
@@ -40,11 +44,6 @@ export function validateEmail(raw: string): ValidationResult<string> {
     domain.endsWith(".")
   ) {
     return { ok: false, error: "invalid_email" };
-  }
-
-  // Reject AI-mutated + suffixes on the local part.
-  if (local.includes("+")) {
-    return { ok: false, error: "suspicious_email" };
   }
 
   if (!EMAIL_LOCAL_PART_RE.test(local) || !EMAIL_DOMAIN_RE.test(domain)) {
