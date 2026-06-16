@@ -1,0 +1,97 @@
+                  List of relations
+ Schema |        Name        |   Type   |   Owner    
+--------+--------------------+----------+------------
+ public | _migrations        | table    | scm_bridge
+ public | _migrations_id_seq | sequence | scm_bridge
+ public | booking_locks      | table    | scm_bridge
+ public | conversations      | table    | scm_bridge
+ public | payment_sessions   | table    | scm_bridge
+ public | processed_messages | table    | scm_bridge
+ public | slot_menus         | table    | scm_bridge
+(7 rows)
+
+                              Table "public.conversations"
+      Column      |           Type           | Collation | Nullable |      Default      
+------------------+--------------------------+-----------+----------+-------------------
+ id               | uuid                     |           | not null | gen_random_uuid()
+ contact_id       | text                     |           | not null | 
+ location_id      | text                     |           | not null | 
+ current_state    | text                     |           | not null | 
+ collected_fields | jsonb                    |           | not null | '{}'::jsonb
+ context          | jsonb                    |           | not null | '{}'::jsonb
+ created_at       | timestamp with time zone |           | not null | now()
+ updated_at       | timestamp with time zone |           | not null | now()
+Indexes:
+    "conversations_pkey" PRIMARY KEY, btree (id)
+    "idx_conversations_location_contact" UNIQUE, btree (location_id, contact_id)
+    "idx_conversations_updated_at" btree (updated_at)
+Referenced by:
+    TABLE "booking_locks" CONSTRAINT "booking_locks_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    TABLE "payment_sessions" CONSTRAINT "payment_sessions_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    TABLE "slot_menus" CONSTRAINT "slot_menus_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+Policies:
+    POLICY "conversations_location_isolation"
+      USING ((location_id = current_setting('app.current_location_id'::text, true)))
+Triggers:
+    trg_conversations_updated_at BEFORE UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+
+                              Table "public.payment_sessions"
+       Column        |           Type           | Collation | Nullable |      Default      
+---------------------+--------------------------+-----------+----------+-------------------
+ id                  | uuid                     |           | not null | gen_random_uuid()
+ stripe_session_id   | text                     |           | not null | 
+ status              | text                     |           | not null | 
+ slot_iso            | timestamp with time zone |           | not null | 
+ appointment_type_id | text                     |           | not null | 
+ contact_id          | text                     |           | not null | 
+ conversation_id     | uuid                     |           |          | 
+ idempotency_key     | text                     |           |          | 
+ collected_fields    | jsonb                    |           | not null | '{}'::jsonb
+ created_at          | timestamp with time zone |           | not null | now()
+ updated_at          | timestamp with time zone |           | not null | now()
+Indexes:
+    "payment_sessions_pkey" PRIMARY KEY, btree (id)
+    "idx_payment_sessions_contact_status" btree (contact_id, status)
+    "payment_sessions_idempotency_key_key" UNIQUE CONSTRAINT, btree (idempotency_key)
+    "payment_sessions_stripe_session_id_key" UNIQUE CONSTRAINT, btree (stripe_session_id)
+Foreign-key constraints:
+    "payment_sessions_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+Policies:
+    POLICY "payment_sessions_location_isolation"
+      USING (true)
+Triggers:
+    trg_payment_sessions_updated_at BEFORE UPDATE ON payment_sessions FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+
+                             Table "public.booking_locks"
+     Column      |           Type           | Collation | Nullable |      Default      
+-----------------+--------------------------+-----------+----------+-------------------
+ id              | uuid                     |           | not null | gen_random_uuid()
+ contact_id      | text                     |           | not null | 
+ conversation_id | uuid                     |           | not null | 
+ expires_at      | timestamp with time zone |           | not null | 
+ created_at      | timestamp with time zone |           | not null | now()
+Indexes:
+    "booking_locks_pkey" PRIMARY KEY, btree (id)
+    "booking_locks_contact_id_key" UNIQUE CONSTRAINT, btree (contact_id)
+    "idx_booking_locks_expires_at" btree (expires_at)
+Foreign-key constraints:
+    "booking_locks_conversation_id_fkey" FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+Policies:
+    POLICY "booking_locks_location_isolation"
+      USING (true)
+
+                         Table "public.processed_messages"
+    Column    |           Type           | Collation | Nullable |      Default      
+--------------+--------------------------+-----------+----------+-------------------
+ id           | uuid                     |           | not null | gen_random_uuid()
+ message_id   | text                     |           | not null | 
+ contact_id   | text                     |           | not null | 
+ processed_at | timestamp with time zone |           | not null | now()
+Indexes:
+    "processed_messages_pkey" PRIMARY KEY, btree (id)
+    "idx_processed_messages_contact_processed_at" btree (contact_id, processed_at)
+    "processed_messages_message_id_key" UNIQUE CONSTRAINT, btree (message_id)
+Policies:
+    POLICY "processed_messages_location_isolation"
+      USING (true)
+
