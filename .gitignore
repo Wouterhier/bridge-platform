@@ -1,0 +1,25 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+
+# Runtime state
+.shortlinks.json
+.confirmed-payments.json
+
+# Local credentials
+credentials/
+*.pem
+*.key
