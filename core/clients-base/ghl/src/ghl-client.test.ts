@@ -167,5 +167,42 @@ describe("ghl-client", () => {
       expect(result.skipped).toBeUndefined();
       expect(result.pipelineStageId).toBe(AI_REPLIED);
     });
+
+    it("does not regress BOOKED to PROSPECT_REPLIED", async () => {
+      const client = makeClient();
+      let updateCalled = false;
+      mockFetch((input, init) => {
+        if (init?.method === "PUT") {
+          updateCalled = true;
+        }
+        return new Response(JSON.stringify({ id: "o1", pipelineStageId: AI_REPLIED }), { status: 200 });
+      });
+
+      const result = await client.updateOpportunityStageSafe("loc1", "o1", AI_REPLIED, ELIGIBILITY_BOOKED);
+      expect(updateCalled).toBe(false);
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBe("stage_downgrade_prevented");
+      expect(result.pipelineStageId).toBe(ELIGIBILITY_BOOKED);
+    });
+
+    it("BOOKED contact with emergency still escalates to HUMAN_TOUCH", async () => {
+      const client = makeClient();
+      let updateCalled = false;
+      let updateStageId: string | undefined;
+      mockFetch((input, init) => {
+        if (init?.method === "PUT") {
+          updateCalled = true;
+          const body = JSON.parse(init.body as string);
+          updateStageId = body.pipelineStageId;
+        }
+        return new Response(JSON.stringify({ id: "o1", pipelineStageId: HUMAN_TOUCH }), { status: 200 });
+      });
+
+      const result = await client.updateOpportunityStageSafe("loc1", "o1", HUMAN_TOUCH, ELIGIBILITY_BOOKED);
+      expect(updateCalled).toBe(true);
+      expect(updateStageId).toBe(HUMAN_TOUCH);
+      expect(result.pipelineStageId).toBe(HUMAN_TOUCH);
+      expect(result.escalatedAt).toBe("2026-06-16T12:00:00.000Z");
+    });
   });
 });

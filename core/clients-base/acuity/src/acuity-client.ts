@@ -76,6 +76,7 @@ export function createAcuityClient(config: AcuityClientConfig) {
     "base64",
   );
   const db = config.db;
+  const inFlight = new Map<string, Promise<AcuityAppointment>>();
 
   if (!config.userId || !config.apiKey) {
     throw new Error("ACUITY_USER_ID and ACUITY_API_KEY are required");
@@ -159,39 +160,60 @@ export function createAcuityClient(config: AcuityClientConfig) {
             "AcuityClient: db is required when idempotencyKey is provided",
           );
         }
-        // Idempotency: replay protection for webhook-vs-poll race.
-        const existing = await findPaymentSessionByIdempotencyKey(
-          db,
-          idempotencyKey,
-        );
-        if (existing?.acuity_appointment_id) {
-          const appointmentId = Number(existing.acuity_appointment_id);
-          return getAppointment(appointmentId);
+
+        // Deduplicate concurrent calls with the same idempotency key.
+        const existingFlight = inFlight.get(idempotencyKey);
+        if (existingFlight) {
+          return existingFlight;
         }
-      }
 
-      const appointment = await request<AcuityAppointment>(
-        "POST",
-        "/appointments",
-        acuityPayload,
-      );
-
-      // Persist the Acuity appointment id against the payment session.
-      if (appointment.id != null) {
-        if (paymentSessionId) {
-          await markAppointmentCreated(db as Db, paymentSessionId, appointment.id);
-        } else if (idempotencyKey && db) {
-          const session = await findPaymentSessionByIdempotencyKey(
+        // Build the flight promise synchronously so inFlight is set before
+        // any await that would yield control to a concurrent caller.
+        const flightPromise = (async () => {
+          // Idempotency: replay protection for webhook-vs-poll race.
+          const existing = await findPaymentSessionByIdempotencyKey(
             db,
             idempotencyKey,
           );
-          if (session) {
-            await markAppointmentCreated(db, session.id, appointment.id);
+          if (existing?.acuity_appointment_id) {
+            const appointmentId = Number(existing.acuity_appointment_id);
+            return getAppointment(appointmentId);
           }
+
+          const appointment = await request<AcuityAppointment>(
+            "POST",
+            "/appointments",
+            acuityPayload,
+          );
+
+          // Persist the Acuity appointment id against the payment session.
+          if (appointment.id != null) {
+            if (paymentSessionId) {
+              await markAppointmentCreated(db, paymentSessionId, appointment.id);
+            } else {
+              const session = await findPaymentSessionByIdempotencyKey(
+                db,
+                idempotencyKey,
+              );
+              if (session) {
+                await markAppointmentCreated(db, session.id, appointment.id);
+              }
+            }
+          }
+
+          return appointment;
+        })();
+
+        inFlight.set(idempotencyKey, flightPromise);
+
+        try {
+          return await flightPromise;
+        } finally {
+          inFlight.delete(idempotencyKey);
         }
       }
 
-      return appointment;
+      return request<AcuityAppointment>("POST", "/appointments", acuityPayload);
     },
 
     async getAppointment(id: number): Promise<AcuityAppointment> {

@@ -3,6 +3,7 @@ import { AnthropicProvider } from "@romea/provider-anthropic";
 import { createMoonshotProvider } from "@romea/provider-moonshot";
 import { createGoogleProvider } from "@romea/provider-google";
 import { createStreamlakeProvider } from "@romea/provider-streamlake";
+import { createDashIntlProvider } from "@romea/provider-dash-intl";
 
 export function createRouter(cfg?: RouterConfig): ModelRouter {
   const config = cfg ?? loadConfig();
@@ -24,6 +25,10 @@ export function createRouter(cfg?: RouterConfig): ModelRouter {
       zai: createStreamlakeProvider({
         apiKey: config.streamlakeApiKey ?? "",
         baseUrl: config.streamlakeBaseUrl,
+      }),
+      dash_intl: createDashIntlProvider({
+        apiKey: config.dashIntlApiKey ?? config.streamlakeApiKey ?? "",
+        baseUrl: config.dashIntlBaseUrl,
       }),
     },
   });

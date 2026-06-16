@@ -100,12 +100,13 @@ describe("generate() style lint", () => {
         generateModel: "anth_api/claude-sonnet-4-6",
         generateFallbackModel: "anth_api/claude-sonnet-4-6",
       });
-      const results: Array<{ state: ScmState; issues: string[]; text: string }> = [];
 
-      for (const { state, collected } of testStates) {
-        const text = await generate(state, collected, [], undefined, undefined, { router });
-        results.push({ state, issues: lintMessage(text), text });
-      }
+      const results = await Promise.all(
+        testStates.map(async ({ state, collected }) => {
+          const text = await generate(state, collected, [], undefined, undefined, { router });
+          return { state, issues: lintMessage(text), text };
+        }),
+      );
 
       const failures = results.filter((r) => r.issues.length > 0);
       expect(failures).toEqual([]);
@@ -117,8 +118,8 @@ describe("generate() style lint", () => {
     "fallback model passes style rules across 10 states",
     async () => {
       const router = makeRouter({
-        generateModel: "moon_api/kimi-k2.7-code-highspeed",
-        generateFallbackModel: "moon_api/kimi-k2.7-code-highspeed",
+        generateModel: "dash_intl/glm-5.1",
+        generateFallbackModel: "dash_intl/glm-5.1",
       });
       const results: Array<{ state: ScmState; issues: string[]; text: string }> = [];
 
@@ -130,7 +131,7 @@ describe("generate() style lint", () => {
       const failures = results.filter((r) => r.issues.length > 0);
       expect(failures).toEqual([]);
     },
-    longTimeout * 2,
+    longTimeout * 6,
   );
 });
 

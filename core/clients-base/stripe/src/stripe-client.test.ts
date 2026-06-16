@@ -71,7 +71,7 @@ describe("stripe-client", () => {
     expect(result).toEqual(mockList);
   });
 
-  it("constructWebhookEvent verifies a valid signature", () => {
+  it("accepts correctly signed webhook", () => {
     const webhookSecret = "whsec_test_123";
     const client = createStripeClient({ secretKey });
     const event = { id: "evt_1", type: "checkout.session.completed", data: { object: { id: "cs_test_123" } } };
@@ -81,6 +81,15 @@ describe("stripe-client", () => {
     const result = client.constructWebhookEvent(payload, signature, webhookSecret);
     expect(result.id).toBe("evt_1");
     expect(result.type).toBe("checkout.session.completed");
+  });
+
+  it("rejects unsigned webhook POST", () => {
+    const webhookSecret = "whsec_test_123";
+    const client = createStripeClient({ secretKey });
+    const event = { id: "evt_1", type: "checkout.session.completed", data: { object: { id: "cs_test_123" } } };
+    const payload = JSON.stringify(event);
+
+    expect(() => client.constructWebhookEvent(payload, "", webhookSecret)).toThrow();
   });
 
   it("constructWebhookEvent rejects an invalid signature", () => {

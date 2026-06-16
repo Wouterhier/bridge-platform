@@ -146,6 +146,73 @@ describe("acuity-client", () => {
     const result = await client.updateAppointmentFormFields(123, [{ id: 1, value: "yes" }]);
     expect(result).toEqual(appointment);
   });
+
+  it("prevents double-book race via in-flight deduplication", async () => {
+    const rows: Array<Partial<import("@romea/bridge-db").PaymentSessionRow>> = [
+      {
+        id: "ps_race",
+        idempotency_key: "race-test-123",
+        status: "paid",
+        acuity_appointment_id: null,
+      },
+    ];
+    const updates: Array<{ sql: string; params: unknown[] }> = [];
+    const db: Db = {
+      async query<T = unknown>(sql: string, params?: unknown[]) {
+        if (sql.toLowerCase().includes("select")) {
+          const key = params?.[0] as string | undefined;
+          const matched = rows.find((r) => r.idempotency_key === key);
+          return { rows: matched ? [matched as T] : [] };
+        }
+        if (sql.toLowerCase().includes("update")) {
+          updates.push({ sql, params: params ?? [] });
+          const acuityId = params?.[0] as string;
+          const sessionId = params?.[1] as string;
+          const row = rows.find((r) => r.id === sessionId);
+          if (row) row.acuity_appointment_id = acuityId;
+        }
+        return { rows: [] };
+      },
+    };
+
+    const client = createAcuityClient({ userId, apiKey, db });
+    let postCount = 0;
+    mockFetch((input, init) => {
+      const url = getUrl(input);
+      if (url.includes("/appointments") && init?.method === "POST") {
+        postCount++;
+        // Simulate slight delay so second concurrent call hits in-flight lock.
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve(new Response(JSON.stringify({ id: "appt-1" }), { status: 201 }));
+          }, 50);
+        });
+      }
+      return new Response(JSON.stringify({ id: "appt-2" }), { status: 201 });
+    });
+
+    const [result1, result2] = await Promise.all([
+      client.createAppointment({
+        appointmentTypeID: 79429909,
+        datetime: "2026-06-20T10:00:00",
+        idempotencyKey: "race-test-123",
+        paymentSessionId: "ps_race",
+      }),
+      client.createAppointment({
+        appointmentTypeID: 79429909,
+        datetime: "2026-06-20T10:00:00",
+        idempotencyKey: "race-test-123",
+        paymentSessionId: "ps_race",
+      }),
+    ]);
+
+    expect(postCount).toBe(1);
+    expect(result1).toEqual({ id: "appt-1" });
+    expect(result2).toEqual({ id: "appt-1" });
+
+    const updatedRow = rows.find((r) => r.id === "ps_race");
+    expect(updatedRow?.acuity_appointment_id).toBe("appt-1");
+  });
 });
 
 describe("mapIntakeFields", () => {

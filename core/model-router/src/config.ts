@@ -18,6 +18,9 @@ export interface RouterConfig {
 
   streamlakeApiKey?: string;
   streamlakeBaseUrl: string;
+
+  dashIntlApiKey?: string;
+  dashIntlBaseUrl: string;
 }
 
 const requiredModelVars = [
@@ -85,6 +88,12 @@ export function loadConfig(options?: { dotenvPaths?: string[] }): RouterConfig {
     streamlakeBaseUrl:
       process.env.STREAMLAKE_BASE_URL ??
       'https://vanchin.streamlake.ai/api/gateway/v1/endpoints',
+
+    dashIntlApiKey:
+      process.env.DASHSCOPE_SG_KEY ?? process.env.STREAMLAKE_API_KEY,
+    dashIntlBaseUrl:
+      process.env.DASHSCOPE_INTL_BASE_URL ??
+      'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   };
 
   for (const [key, value] of Object.entries(config)) {
