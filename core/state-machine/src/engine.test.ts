@@ -168,4 +168,133 @@ describe("createEngine", () => {
     expect(result.state).toBe("END");
     expect(result.rePrompt).toBe(false);
   });
+
+  it("persists the validator's normalized output, not the raw extraction", async () => {
+    type PhoneState = "COLLECT_PHONE" | "DONE";
+    type PhoneField = "phone";
+    const config: StateMachineConfig<PhoneState, PhoneField, Context> = {
+      initialState: "COLLECT_PHONE",
+      states: {
+        COLLECT_PHONE: {
+          id: "COLLECT_PHONE",
+          requiredField: "phone",
+          validate: (raw) => {
+            let digits = raw.replace(/\D/g, "");
+            if (digits.length < 8) {
+              return { ok: false, error: "INVALID_PHONE" };
+            }
+            if (digits.startsWith("00")) {
+              digits = digits.slice(2);
+            } else if (digits.startsWith("0")) {
+              digits = "64" + digits.slice(1);
+            }
+            const normalized = digits.startsWith("+")
+              ? digits
+              : `+${digits.slice(0, 10)}`;
+            return { ok: true, value: normalized };
+          },
+          next: () => "DONE",
+          buildPromptContext: () => "Ask for phone",
+        },
+        DONE: {
+          id: "DONE",
+          validate: () => ({ ok: true }),
+          next: () => "DONE",
+          buildPromptContext: () => "Finished",
+        },
+      },
+    };
+    const engine = createEngine(config);
+    const result = await engine.process({
+      rawMessage: "021 000 0000",
+      conversation: { currentState: "COLLECT_PHONE", collected: {} },
+      context: { tenant: "test" },
+    });
+    expect(result.state).toBe("DONE");
+    expect(result.rePrompt).toBe(false);
+    expect(result.collected.phone).toBe("+6421000000");
+  });
+
+  it("does not skip states when payload contains extra intent", async () => {
+    type BookingState = "COLLECTING_EMAIL" | "SELECTING_SERVICE" | "CONFIRMED";
+    type BookingField = "email";
+    const config: StateMachineConfig<BookingState, BookingField, Context> = {
+      initialState: "COLLECTING_EMAIL",
+      states: {
+        COLLECTING_EMAIL: {
+          id: "COLLECTING_EMAIL",
+          requiredField: "email",
+          validate: (raw) => {
+            const match = raw.match(/[^\s@]+@[^\s@]+\.[^\s@]+/);
+            if (!match) {
+              return { ok: false, error: "INVALID_EMAIL" };
+            }
+            return { ok: true, value: match[0] };
+          },
+          next: () => "SELECTING_SERVICE",
+          buildPromptContext: () => "Ask for email",
+        },
+        SELECTING_SERVICE: {
+          id: "SELECTING_SERVICE",
+          validate: () => ({ ok: true }),
+          next: () => "CONFIRMED",
+          buildPromptContext: () => "Ask for service",
+        },
+        CONFIRMED: {
+          id: "CONFIRMED",
+          validate: () => ({ ok: true }),
+          next: () => "CONFIRMED",
+          buildPromptContext: () => "Confirmed",
+        },
+      },
+    };
+    const engine = createEngine(config);
+    const result = await engine.process({
+      rawMessage: "test@example.com I want to book now",
+      conversation: { currentState: "COLLECTING_EMAIL", collected: {} },
+      context: { tenant: "test" },
+    });
+    expect(result.state).toBe("SELECTING_SERVICE");
+    expect(result.rePrompt).toBe(false);
+    expect(result.collected.email).toBe("test@example.com");
+  });
+
+  it("re-prompts on empty input and does not write a partial field", async () => {
+    type NameState = "ASK_NAME" | "DONE";
+    type NameField = "name";
+    const config: StateMachineConfig<NameState, NameField, Context> = {
+      initialState: "ASK_NAME",
+      states: {
+        ASK_NAME: {
+          id: "ASK_NAME",
+          requiredField: "name",
+          validate: (raw) => {
+            const trimmed = raw.trim();
+            if (trimmed.length === 0) {
+              return { ok: false, error: "NAME_REQUIRED" };
+            }
+            return { ok: true, value: trimmed };
+          },
+          next: () => "DONE",
+          buildPromptContext: () => "Ask for name",
+        },
+        DONE: {
+          id: "DONE",
+          validate: () => ({ ok: true }),
+          next: () => "DONE",
+          buildPromptContext: () => "Finished",
+        },
+      },
+    };
+    const engine = createEngine(config);
+    const result = await engine.process({
+      rawMessage: "",
+      conversation: { currentState: "ASK_NAME", collected: {} },
+      context: { tenant: "test" },
+    });
+    expect(result.state).toBe("ASK_NAME");
+    expect(result.rePrompt).toBe(true);
+    expect(result.validationError).toBe("NAME_REQUIRED");
+    expect(result.collected).toEqual({});
+  });
 });
