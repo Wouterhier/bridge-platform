@@ -1,0 +1,19 @@
+{
+  "name": "@romea/bridge-db",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "migrate": "tsx src/migrate.ts",
+    "migrate:status": "tsx src/migrate.ts --status",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
+  }
+}
