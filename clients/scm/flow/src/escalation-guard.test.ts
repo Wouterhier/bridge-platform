@@ -33,6 +33,20 @@ describe("shouldEscalate", () => {
     });
   });
 
+  it("keys RoidCare exception off collected serviceKey, not message wording", () => {
+    expect(shouldEscalate("I'm taking steroids", "roidcare_initial")).toEqual({
+      escalate: false,
+    });
+    expect(shouldEscalate("I'm taking steroids", undefined)).toEqual({
+      escalate: true,
+      reason: "ped_mention",
+    });
+    expect(shouldEscalate("I'm taking steroids", "trt_initial")).toEqual({
+      escalate: true,
+      reason: "ped_mention",
+    });
+  });
+
   it("does not escalate routine messages", () => {
     expect(shouldEscalate("I want to book a TRT consultation")).toEqual({
       escalate: false,
