@@ -5,6 +5,7 @@
   "workspaces": [
     "core/*",
     "core/providers/*",
+    "core/clients-base/*",
     "clients/*",
     "clients/scm/flow"
   ],
