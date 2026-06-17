@@ -149,20 +149,45 @@ export function compactHistory(history: HistoryMessage[]): string[] {
   });
 }
 
+function sanitizeOutput(text: string, state?: ScmState): string {
+  /* Enforce style rules that models sometimes ignore */
+  let sanitized = (
+    text
+      /* Replace em dashes and standalone double dashes */
+      .replace(/—/g, " - ")
+      .replace(/\b--\b/g, " - ")
+      /* Replace semicolons with periods */
+      .replace(/;/g, ".")
+  );
+
+  /* Only strip pre-payment 'confirmed' / 'set' language in pre-payment states */
+  if (state === "AWAITING_PAYMENT" || state === "CREATING_CHECKOUT") {
+    sanitized = sanitized
+      .replace(/\bwill be confirmed\b/gi, "will be finalised")
+      .replace(/\bis confirmed\b/gi, "is finalised")
+      .replace(/\bconfirmed\b/gi, "finalised")
+      .replace(/\bis set for\b/gi, "is scheduled for")
+      .replace(/\bis set\b/gi, "is arranged");
+  }
+
+  return sanitized;
+}
+
 async function callGenerate(
   router: ModelRouter,
   req: ModelRequest,
+  state?: ScmState,
 ): Promise<string> {
   try {
     const res = await router.complete("generate", req);
-    return res.text.trim();
+    return sanitizeOutput(res.text.trim(), state);
   } catch {
     try {
       const fallbackRes = await router.complete("generate", {
         ...req,
         temperature: 0.7,
       });
-      return fallbackRes.text.trim();
+      return sanitizeOutput(fallbackRes.text.trim(), state);
     } catch {
       throw new Error("generate failed");
     }
@@ -208,7 +233,7 @@ export async function generate(
   };
 
   try {
-    return await callGenerate(router, req);
+    return await callGenerate(router, req, state);
   } catch {
     return getFallbackMessage(state);
   }
