@@ -10,10 +10,9 @@ import {
 import { Pool } from "pg";
 import { config } from "dotenv";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { ConversationService, type InboundPayload } from "../../service/src/conversation-service.js";
-import { generate } from "../../flow/src/generate.js";
-import { createRouter } from "../../flow/src/model-router-factory.js";
-import { loadConfig } from "@romea/model-router";
+import { sanitizeOutput } from "../../flow/src/generate.js";
 import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
@@ -78,6 +77,13 @@ function makePayload(overrides: Partial<InboundPayload> = {}): InboundPayload {
     ...overrides,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Fixture                                                           */
+/* ------------------------------------------------------------------ */
+
+const fixturePath = resolve(process.cwd(), "clients/scm/harness/fixtures/glm-payment-nudge-samples.json");
+const paymentNudgeSamples: string[] = JSON.parse(readFileSync(fixturePath, "utf-8"));
 
 /* ------------------------------------------------------------------ */
 /*  Test suite                                                         */
@@ -271,36 +277,31 @@ describe("payment-url regression", () => {
   });
 
   /* ---------------------------------------------------------------- */
-  /*  Test C — generate() does not hallucinate stripe.com URLs          */
+  /*  Test C — Fixture-based stripper verification                     */
   /* ---------------------------------------------------------------- */
-  it(
-    "generate() with GLM-5.1 fallback never emits stripe.com URLs for payment nudge",
-    async () => {
-      const cfg = loadConfig();
-      const router = createRouter({
-        ...cfg,
-        generateModel: "dash_intl/glm-5.1",
-        generateFallbackModel: "dash_intl/glm-5.1",
-      } as ReturnType<typeof loadConfig>);
+  it("sanitizeOutput strips hallucinated stripe.com URLs from real GLM-5.1 samples", () => {
+    const collected = {
+      fullName: "John Smith",
+      serviceKey: "trt_initial",
+      slotIso: "2026-06-20T09:00:00+12:00",
+      _paymentLink: "https://checkout.stripe.com/c/pay/cs_live_test_123",
+    };
 
-      const collected = {
-        fullName: "John Smith",
-        serviceKey: "trt_initial",
-        slotIso: "2026-06-20T09:00:00+12:00",
-      };
+    const failures: Array<{ index: number; text: string; stripped: string }> = [];
 
-      const results: string[] = [];
-      for (let i = 0; i < 10; i++) {
-        const text = await generate("AWAITING_PAYMENT", collected, [], undefined, undefined, { router });
-        results.push(text);
+    for (let i = 0; i < paymentNudgeSamples.length; i++) {
+      const raw = paymentNudgeSamples[i];
+      const stripped = sanitizeOutput(raw, "AWAITING_PAYMENT", collected);
+
+      if (/https?:\/\/[^\s]*stripe\.com/i.test(stripped)) {
+        failures.push({ index: i, text: raw, stripped });
       }
+    }
 
-      const failures = results.filter((text) =>
-        /https?:\/\/[^\s]*stripe\.com/i.test(text),
-      );
+    if (failures.length > 0) {
+      console.error("Stripe URL stripper failures:", failures);
+    }
 
-      expect(failures).toEqual([]);
-    },
-    360000,
-  );
+    expect(failures).toEqual([]);
+  });
 });
