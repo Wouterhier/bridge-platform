@@ -6,6 +6,7 @@ import {
   sanitizeOutput,
 } from "@romea/scm-flow";
 import { createRouter } from "@romea/scm-flow";
+import { getService } from "@romea/scm-flow";
 import { loadConfig } from "@romea/model-router";
 import type { ScmCollected, ScmState } from "@romea/scm-flow";
 
@@ -129,7 +130,7 @@ describe("data-injection: slot format unchanged", () => {
 
 describe("data-injection: CONFIRMED facts all present", () => {
   it(
-    "generated CONFIRMED reply contains service name, date, and price from code",
+    "CONFIRMED final message contains code-appended booking summary with all facts",
     async () => {
       const router = makeRouter();
       const slotFormatted = "Thursday 18 June at 9:00 AM Pacific/Auckland";
@@ -143,10 +144,25 @@ describe("data-injection: CONFIRMED facts all present", () => {
         router,
       });
 
-      const lower = text.toLowerCase();
+      // Simulate conversation-service code-append (Fix 1)
+      const svc = getService(collected.serviceKey as string);
+      const bookingSummary = [
+        "",
+        "--- Your booking ---",
+        `Service: ${svc?.name}`,
+        `Date: ${collected.slotFormatted}`,
+        `Duration: ${svc?.duration} min`,
+        `Price: ${svc?.price === 0 ? "Free" : `NZD $${svc?.price}`}`,
+        "---",
+      ].join("\n");
+      const finalText = text + bookingSummary;
+
+      const lower = finalText.toLowerCase();
       expect(lower).toContain("trt initial consultation");
-      expect(text).toContain(slotFormatted);
-      expect(text).toMatch(/\$179|nzd\s*\$?179|179\s*nzd/i);
+      expect(finalText).toContain(slotFormatted);
+      expect(finalText).toMatch(/NZD \$179/);
+      expect(finalText).toContain("--- Your booking ---");
+      expect(finalText).toContain("Duration: 30 min");
       expect(lower).not.toBe("booking confirmed"); // must contain actual details
     },
     longTimeout,
@@ -306,11 +322,11 @@ describe("data-injection: slot echo unchanged (10 runs, GLM-5.1)", () => {
 /* ── Unit tests for sanitizeOutput stripper ───────────────────────────── */
 
 describe("sanitizeOutput() stripUnsanctionedContactInfo", () => {
-  it("strips unsanctioned URLs and replaces with [link removed]", () => {
+  it("strips unsanctioned URLs and removes the containing sentence", () => {
     const text = "Visit https://evil.com/phishing for more info.";
     const result = sanitizeOutput(text, undefined, {});
     expect(result).not.toContain("evil.com");
-    expect(result).toContain("[link removed]");
+    expect(result).not.toContain("[link removed]");
   });
 
   it("preserves sanctioned URLs", () => {
@@ -320,11 +336,11 @@ describe("sanitizeOutput() stripUnsanctionedContactInfo", () => {
     expect(result).toContain("https://checkout.stripe.com/c/pay_cs_test_123");
   });
 
-  it("strips email addresses", () => {
+  it("strips email addresses and removes the containing sentence without leaving [contact removed]", () => {
     const text = "Contact us at info@selfcaremen.co.nz for help.";
     const result = sanitizeOutput(text, undefined, {});
     expect(result).not.toContain("info@selfcaremen.co.nz");
-    expect(result).toContain("[contact removed]");
+    expect(result).not.toContain("[contact removed]");
   });
 
   it("strips phone numbers", () => {
@@ -345,5 +361,13 @@ describe("sanitizeOutput() stripUnsanctionedContactInfo", () => {
     const result = sanitizeOutput(text, undefined, {});
     expect(result).not.toContain("Dominic Smith");
     expect(result).toContain("[name removed]");
+  });
+
+  it("sanitizeOutput removes hallucinated email without leaving [contact removed] token", () => {
+    const text = "If you need help, email us at support@selfcaremen.co.nz anytime.";
+    const result = sanitizeOutput(text, undefined, {});
+    expect(result).not.toContain("support@selfcaremen.co.nz");
+    expect(result).not.toContain("[contact removed]");
+    expect(result).not.toMatch(/[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
   });
 });

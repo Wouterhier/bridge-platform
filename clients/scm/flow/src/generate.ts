@@ -271,19 +271,21 @@ function stripUnsanctionedContactInfo(
   text: string,
   sanctionedUrls: string[],
 ): string {
-  // Remove any URL not in sanctionedUrls
+  let result = text;
+
+  // First pass: replace unsanctioned URLs with a temporary marker
   const urlRegex = /https?:\/\/[^\s)"\]]+/g;
-  let result = text.replace(urlRegex, (match) => {
+  result = result.replace(urlRegex, (match) => {
     if (sanctionedUrls.some((u) => match.startsWith(u))) return match;
     console.warn(`[generate] Stripped unsanctioned URL: ${match}`);
-    return "[link removed]";
+    return "__UNSCTIONED_URL__";
   });
 
-  // Remove email patterns not in sanctionedEmails (none currently)
-  result = result.replace(/\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b/gi, (match) => {
-    console.warn(`[generate] Stripped unsanctioned email: ${match}`);
-    return "[contact removed]";
-  });
+  // Strip entire sentences containing the unsanctioned-URL marker
+  result = result.replace(/[^.!?\n]*__UNSCTIONED_URL__[^.!?\n]*/g, "");
+
+  // Strip entire sentences containing email patterns
+  result = result.replace(/[^.!?\n]*\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b[^.!?\n]*/gi, "");
 
   // Remove NZ/international phone patterns
   const phoneRegex =
@@ -308,6 +310,9 @@ function stripUnsanctionedContactInfo(
       result = result.replace(re, "[name removed]");
     }
   }
+
+  // Collapse double whitespace and newlines after sentence stripping
+  result = result.replace(/\n{3,}/g, "\n\n").replace(/ {2,}/g, " ").trim();
 
   return result;
 }

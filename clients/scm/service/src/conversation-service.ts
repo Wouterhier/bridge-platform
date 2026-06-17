@@ -474,6 +474,23 @@ export class ConversationService {
       }
     }
 
+    /* Append booking summary for CONFIRMED / BOOKING_ACUITY so model can never omit facts */
+    if (nextState === "CONFIRMED" || nextState === "BOOKING_ACUITY") {
+      const svc = getService(collected.serviceKey as string);
+      if (svc && collected.slotFormatted) {
+        const bookingSummary = [
+          "",
+          "--- Your booking ---",
+          `Service: ${svc.name}`,
+          `Date: ${collected.slotFormatted}`,
+          `Duration: ${svc.duration} min`,
+          `Price: ${svc.price === 0 ? "Free" : `NZD $${svc.price}`}`,
+          "---",
+        ].join("\n");
+        replyText = replyText + bookingSummary;
+      }
+    }
+
     /* 9. Record processed_messages BEFORE sending reply.
           sent_at is left NULL until the send succeeds so that
           recoverUnsentReplies() can find and re-deliver on restart. */
