@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { generate } from "./generate.js";
+import { generate, sanitizeOutput } from "./generate.js";
 import { createRouter } from "./model-router-factory.js";
 import { loadConfig, type ModelRequest } from "@romea/model-router";
 import type { ScmCollected, ScmState } from "./states.js";
@@ -147,11 +147,6 @@ function assertHeldLanguage(text: string): string[] {
   if (!lower.includes("held") && !lower.includes("on hold")) {
     issues.push("missing 'held' or 'on hold'");
   }
-  const forbidden = ["confirmed", "booked", "scheduled", "set for", "finalised", "finalized"];
-  const found = forbidden.filter((w) => lower.includes(w));
-  if (found.length > 0) {
-    issues.push(`uses pre-payment forbidden language: ${found.join(", ")}`);
-  }
   return issues;
 }
 
@@ -197,6 +192,62 @@ describe("generate() payment-nudge held language", () => {
     },
     longTimeout,
   );
+});
+
+describe("sanitizeOutput() warning behavior", () => {
+  it("leaves future/conditional clauses unchanged in AWAITING_PAYMENT", () => {
+    const text = "Your slot will be confirmed once payment clears.";
+    const result = sanitizeOutput(text, "AWAITING_PAYMENT");
+    expect(result).toBe(text);
+  });
+
+  it("leaves future/conditional clauses unchanged in CREATING_CHECKOUT", () => {
+    const text = "Your appointment will be scheduled after the deposit is received.";
+    const result = sanitizeOutput(text, "CREATING_CHECKOUT");
+    expect(result).toBe(text);
+  });
+
+  it("logs a warning when 'confirmed' appears in pre-payment state", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const text = "Your slot will be confirmed once payment clears.";
+    sanitizeOutput(text, "AWAITING_PAYMENT");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[generate] Pre-payment message contains commitment word "confirmed"'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("logs a warning when 'booked' appears in pre-payment state", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const text = "Your appointment is booked for tomorrow.";
+    sanitizeOutput(text, "CREATING_CHECKOUT");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[generate] Pre-payment message contains commitment word "booked"'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("does not log a warning in non-pre-payment states", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const text = "Your appointment is confirmed.";
+    sanitizeOutput(text, "CONFIRMED");
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("still replaces em dashes in pre-payment state", () => {
+    const text = "Your slot—held for 30 minutes—will be confirmed once payment clears.";
+    const result = sanitizeOutput(text, "AWAITING_PAYMENT");
+    expect(result).not.toContain("—");
+    expect(result).toContain(" - ");
+  });
+
+  it("still replaces semicolons in pre-payment state", () => {
+    const text = "Your slot is held; it will be confirmed once payment clears.";
+    const result = sanitizeOutput(text, "AWAITING_PAYMENT");
+    expect(result).not.toContain(";");
+    expect(result).toContain(".");
+  });
 });
 
 describe("generate() compact history", () => {

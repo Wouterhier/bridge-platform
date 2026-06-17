@@ -167,7 +167,7 @@ export function compactHistory(history: HistoryMessage[]): string[] {
   });
 }
 
-function sanitizeOutput(text: string, state?: ScmState): string {
+export function sanitizeOutput(text: string, state?: ScmState): string {
   /* Enforce style rules that models sometimes ignore */
   let sanitized = (
     text
@@ -178,24 +178,17 @@ function sanitizeOutput(text: string, state?: ScmState): string {
       .replace(/;/g, ".")
   );
 
-  /* Only strip pre-payment 'confirmed' / 'booked' / 'scheduled' / 'set' language in pre-payment states */
+  /* Warn on pre-payment commitment words instead of rewriting (lets conditional/future clauses through) */
   if (state === "AWAITING_PAYMENT" || state === "CREATING_CHECKOUT") {
-    sanitized = sanitized
-      .replace(/\bwill be confirmed\b/gi, "will be held")
-      .replace(/\bis confirmed\b/gi, "is held")
-      .replace(/\bconfirmed\b/gi, "held")
-      .replace(/\bwill be booked\b/gi, "will be held")
-      .replace(/\bis booked\b/gi, "is held")
-      .replace(/\bbooked\b/gi, "held")
-      .replace(/\bwill be scheduled\b/gi, "will be held")
-      .replace(/\bis scheduled\b/gi, "is held")
-      .replace(/\bscheduled\b/gi, "held")
-      .replace(/\bis set for\b/gi, "is held for")
-      .replace(/\bis set\b/gi, "is held")
-      .replace(/\bset for\b/gi, "held for")
-      .replace(/\bset\b/gi, "held")
-      .replace(/\bfinalised\b/gi, "held")
-      .replace(/\bfinalized\b/gi, "held");
+    const commitmentWords = ["confirmed", "booked", "scheduled", "finalised", "finalized"];
+    const lower = sanitized.toLowerCase();
+    for (const word of commitmentWords) {
+      if (lower.includes(word)) {
+        console.warn(
+          `[generate] Pre-payment message contains commitment word "${word}": ${sanitized.slice(0, 120)}`,
+        );
+      }
+    }
   }
 
   return sanitized;
