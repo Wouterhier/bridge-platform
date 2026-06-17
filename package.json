@@ -9,7 +9,8 @@
     "clients/*",
     "clients/scm/flow",
     "clients/scm/service",
-    "clients/scm/payment-service"
+    "clients/scm/payment-service",
+    "clients/scm/harness"
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -21,6 +22,7 @@
   },
   "scripts": {
     "test": "vitest",
+    "test:harness": "vitest run clients/scm/harness",
     "typecheck": "tsc --noEmit"
   }
 }

@@ -1,0 +1,29 @@
+{
+  "name": "@romea/scm-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@romea/scm-flow": "0.0.0",
+    "@romea/scm-service": "0.0.0",
+    "@romea/scm-payment-service": "0.0.0",
+    "@romea/state-machine": "0.0.0",
+    "@romea/model-router": "0.0.0",
+    "@romea/ghl-client": "0.0.0",
+    "@romea/acuity-client": "0.0.0",
+    "@romea/stripe-client": "0.0.0",
+    "@romea/bridge-db": "0.0.0",
+    "pg": "^8.13.0",
+    "dotenv": "^16.4.0",
+    "stripe": "^17.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
