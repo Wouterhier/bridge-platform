@@ -13,6 +13,7 @@ import { generate } from "@romea/scm-flow";
 import { getFallbackMessage } from "@romea/scm-flow";
 import { shouldEscalate } from "@romea/scm-flow";
 import { getService, isPaidService } from "@romea/scm-flow";
+import { sanitizeOutput } from "@romea/scm-flow";
 import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import { mapIntakeFields } from "@romea/acuity-client";
@@ -100,7 +101,7 @@ function formatSlotForDisplay(isoString: string, timezone: string): string {
 
 const holdingTemplates = [
   "Just a moment while I check availability for you.",
-  "One moment please — I am pulling up the latest slots.",
+  "One moment please - I am pulling up the latest slots.",
   "Give me a second to confirm that with the calendar.",
 ];
 
@@ -444,7 +445,13 @@ export class ConversationService {
       collected = bookingResult.collected;
     }
 
-    /* 8. Generate reply */
+    /* 8. Generate reply
+       NOTE: sanitizeOutput() is called INSIDE generate() (via callGenerate)
+       for all model-produced text. It is NOT called on:
+       - fallback messages from getFallbackMessage() (hardcoded, no em dashes)
+       - holding messages (now sanitized explicitly before send)
+       - image-attachment response or escalation notice (hardcoded)
+       The payment-link append happens AFTER sanitization. */
     let replyText: string;
     try {
       replyText = await generate(
@@ -553,7 +560,7 @@ export class ConversationService {
       const timer = setTimeout(async () => {
         try {
           await this.deps.ghl.sendMessage(locationId, contactId, {
-            message: pickHoldingTemplate(),
+            message: sanitizeOutput(pickHoldingTemplate()),
             channel: "sms",
           });
         } catch (e) {
@@ -673,7 +680,7 @@ export class ConversationService {
       const timer = setTimeout(async () => {
         try {
           await this.deps.ghl.sendMessage(locationId, contactId, {
-            message: pickHoldingTemplate(),
+            message: sanitizeOutput(pickHoldingTemplate()),
             channel: "sms",
           });
         } catch (e) {

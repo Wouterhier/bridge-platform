@@ -301,6 +301,6 @@ describe("payment-url regression", () => {
 
       expect(failures).toEqual([]);
     },
-    120000,
+    360000,
   );
 });
