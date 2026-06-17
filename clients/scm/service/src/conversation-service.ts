@@ -246,6 +246,16 @@ async function tryExtract(
 export { recoverUnsentReplies } from "@romea/bridge-db";
 
 /* ------------------------------------------------------------------ */
+/*  URL sanitisation                                                   */
+/* ------------------------------------------------------------------ */
+
+const stripeUrlPattern = /https?:\/\/[^\s]*stripe\.com\/[^\s]*/gi;
+
+function stripPaymentUrls(text: string): string {
+  return text.replace(stripeUrlPattern, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/* ------------------------------------------------------------------ */
 /*  Inbound message classification                                     */
 /* ------------------------------------------------------------------ */
 
@@ -414,11 +424,11 @@ export class ConversationService {
       replyText = getFallbackMessage(nextState);
     }
 
-    /* Append payment link when relevant */
+    /* Append payment link when relevant — strip any model-hallucinated URLs first */
     if (nextState === "AWAITING_PAYMENT" || nextState === "CREATING_CHECKOUT") {
       const paymentLink = collected._paymentLink as string | undefined;
       if (paymentLink) {
-        replyText = `${replyText}\n\n${paymentLink}`;
+        replyText = `${stripPaymentUrls(replyText)}\n\n${paymentLink}`;
       }
     }
 

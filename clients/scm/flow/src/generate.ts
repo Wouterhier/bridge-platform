@@ -45,6 +45,11 @@ export function buildSystemPrompt(kb: string, state?: ScmState): string {
     "- If the patient has NOT yet paid, the slot is HELD (e.g. \"held for 30 minutes\", \"on hold\"). Do NOT say the appointment is set, scheduled, confirmed, or booked.",
     "- Only after Stripe payment clears may you use confirmed/booked/scheduled language.",
     "",
+    "## CRITICAL — Never write payment URLs:",
+    "- NEVER include a payment URL, checkout link, or any stripe.com URL in your response.",
+    "- The system appends the real payment link automatically after your message.",
+    "- If you mention a payment link, say something like \"I have sent the payment link separately\" or \"Use the secure payment link we sent.\" Do NOT write the actual URL.",
+    "",
     "## Role",
     "- Guide the patient through booking a consultation.",
     "- Be calm, precise, and warm.",
@@ -136,7 +141,7 @@ function buildStateInstruction(
       break;
     case "AWAITING_PAYMENT":
       parts.push(
-        "The payment is pending. Share the payment link and remind the patient their slot is held.",
+        "The payment is pending. Remind the patient their slot is held. Do NOT include a payment link or any URL — the system will add the real one automatically.",
       );
       break;
     case "BOOKING_ACUITY":
