@@ -5,6 +5,7 @@ import type { ModelRequest, ModelRouter } from "@romea/model-router";
 import { loadConfig } from "@romea/model-router";
 import { createRouter } from "./model-router-factory.js";
 import { getFallbackMessage } from "./fallback-messages.js";
+import { getService, type ServiceConfig } from "./services.js";
 import type { ScmCollected, ScmState } from "./states.js";
 
 export interface HistoryMessage {
@@ -29,6 +30,86 @@ function loadKnowledgeBase(kbPath?: string): string {
   }
 }
 
+/* ── Clinician names from KB Section 8 (for stripping) ─────────────────── */
+const clinicianNames = new Set([
+  "Dominic Smith",
+  "Dom Smith",
+  "Josiah Tu'inukuafe",
+  "Vijay Srivastava",
+  "Sean Cameron",
+  "Rokia Kone",
+  "Jack Yeoman",
+  "Jimmy Maslai",
+  "Idris Anwar",
+  "Tushar Srivastava",
+  "Sonja de Jong",
+  "Lisa Walker",
+  "Thomas Wood",
+]);
+
+function containsClinicianName(text: string): boolean {
+  const lower = text.toLowerCase();
+  for (const name of clinicianNames) {
+    if (lower.includes(name.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/* ── Service facts injection ───────────────────────────────────────────── */
+function resolveServiceConfig(collected: ScmCollected): ServiceConfig | undefined {
+  const raw = collected.serviceKey;
+  if (typeof raw === "string") return getService(raw);
+  if (raw && typeof raw === "object" && "key" in raw) return raw as ServiceConfig;
+  return undefined;
+}
+
+export function buildServiceFactsBlock(collected: ScmCollected): string {
+  const svc = resolveServiceConfig(collected);
+  if (!svc) return "";
+  return [
+    "--- SERVICE FACTS (code-provided, authoritative) ---",
+    `Service: ${svc.name}`,
+    `Duration: ${svc.duration} min`,
+    `Price: ${svc.price === 0 ? "Free" : `NZD $${svc.price}`}`,
+    "--- END SERVICE FACTS ---",
+  ].join("\n");
+}
+
+/* ── Slot facts injection ──────────────────────────────────────────────── */
+function buildSlotFactsBlock(collected: ScmCollected): string {
+  if (!collected.slotMenuFormatted) return "";
+  return [
+    "--- SLOT FACTS (code-provided, authoritative) ---",
+    collected.slotMenuFormatted,
+    "--- END SLOT FACTS ---",
+  ].join("\n");
+}
+
+function buildSelectedSlotFactsBlock(collected: ScmCollected): string {
+  if (!collected.slotFormatted) return "";
+  return [
+    "--- SELECTED SLOT FACTS (code-provided, authoritative) ---",
+    `Date/Time: ${collected.slotFormatted}`,
+    "--- END SELECTED SLOT FACTS ---",
+  ].join("\n");
+}
+
+/* ── Confirmed booking facts injection ─────────────────────────────────── */
+export function buildConfirmedFacts(collected: ScmCollected): string {
+  const svc = resolveServiceConfig(collected);
+  if (!svc || !collected.slotFormatted) return "";
+  return [
+    "--- CONFIRMED BOOKING FACTS ---",
+    `Patient: ${collected.fullName ?? ""}`,
+    `Service: ${svc.name}`,
+    `Date: ${collected.slotFormatted}`,
+    `Duration: ${svc.duration} min`,
+    `Price: ${svc.price === 0 ? "Free" : `NZD $${svc.price}`}`,
+    "--- END CONFIRMED BOOKING FACTS ---",
+  ].join("\n");
+}
+
+/* ── System prompt builder ─────────────────────────────────────────────── */
 export function buildSystemPrompt(kb: string, state?: ScmState): string {
   const kbMode = process.env.KB_MODE ?? "inline";
   const parts = [
@@ -40,6 +121,11 @@ export function buildSystemPrompt(kb: string, state?: ScmState): string {
     "- No exclamation points in the opening line.",
     "- No semicolons in SMS/chat/WhatsApp; split into two sentences.",
     "- Register: calm, precise, warm patient coordinator at a top-tier clinic. Never salesy.",
+    "",
+    "## Code-injected facts — OBEY these above all other sources:",
+    "- Use ONLY the service name, duration, and price from the SERVICE FACTS block above. Do not use prices or service details from the knowledge base.",
+    "- Echo the slot date/time EXACTLY as provided in the slot facts. Do not reformat, abbreviate, or change timezone.",
+    "- Do not mention any clinician, doctor, or staff name in your response.",
     "",
     "## Payment-state language:",
     "- If the patient has NOT yet paid, the slot is HELD (e.g. \"held for 30 minutes\", \"on hold\"). Do NOT say the appointment is set, scheduled, confirmed, or booked.",
@@ -73,7 +159,12 @@ export function buildSystemPrompt(kb: string, state?: ScmState): string {
   }
 
   if (kbMode === "inline") {
-    parts.push("", "## Knowledge base", kb);
+    parts.push(
+      "",
+      "## Knowledge base",
+      "NOTE: The knowledge base below is for general reference and illustrative purposes only. For the currently selected service's exact name, duration, and price, use ONLY the SERVICE FACTS block provided above.",
+      kb,
+    );
   }
 
   return parts.join("\n");
@@ -175,7 +266,57 @@ export function compactHistory(history: HistoryMessage[]): string[] {
   });
 }
 
-export function sanitizeOutput(text: string, state?: ScmState): string {
+/* ── Unsanctioned contact-info stripper ────────────────────────────────── */
+function stripUnsanctionedContactInfo(
+  text: string,
+  sanctionedUrls: string[],
+): string {
+  // Remove any URL not in sanctionedUrls
+  const urlRegex = /https?:\/\/[^\s)"\]]+/g;
+  let result = text.replace(urlRegex, (match) => {
+    if (sanctionedUrls.some((u) => match.startsWith(u))) return match;
+    console.warn(`[generate] Stripped unsanctioned URL: ${match}`);
+    return "[link removed]";
+  });
+
+  // Remove email patterns not in sanctionedEmails (none currently)
+  result = result.replace(/\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b/gi, (match) => {
+    console.warn(`[generate] Stripped unsanctioned email: ${match}`);
+    return "[contact removed]";
+  });
+
+  // Remove NZ/international phone patterns
+  const phoneRegex =
+    /(?:\+\d{1,3}[-.\s()]*)?\(?\d{2,4}\)?[-.\s]*\d{3,4}[-.\s]*\d{3,4}/g;
+  result = result.replace(phoneRegex, (match) => {
+    const digits = match.replace(/\D/g, "");
+    if (digits.length >= 8 && digits.length <= 15) {
+      // Don't strip bare sequences of digits without phone-like separators
+      if (!match.startsWith("+") && !/[()\s-]/.test(match)) {
+        return match;
+      }
+      console.warn(`[generate] Stripped phone: ${match}`);
+      return "[phone removed]";
+    }
+    return match;
+  });
+
+  // Strip clinician names if they appear
+  if (containsClinicianName(result)) {
+    for (const name of clinicianNames) {
+      const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
+      result = result.replace(re, "[name removed]");
+    }
+  }
+
+  return result;
+}
+
+export function sanitizeOutput(
+  text: string,
+  state?: ScmState,
+  collected?: ScmCollected,
+): string {
   /* Enforce style rules that models sometimes ignore */
   let sanitized = (
     text
@@ -185,6 +326,13 @@ export function sanitizeOutput(text: string, state?: ScmState): string {
       /* Replace semicolons with periods */
       .replace(/;/g, ".")
   );
+
+  /* Strip unsanctioned contact info */
+  if (collected) {
+    const extras = collected as Record<string, unknown>;
+    const sanctionedUrls = [(extras._paymentLink as string)].filter(Boolean) as string[];
+    sanitized = stripUnsanctionedContactInfo(sanitized, sanctionedUrls);
+  }
 
   /* Warn on pre-payment commitment words instead of rewriting (lets conditional/future clauses through) */
   if (state === "AWAITING_PAYMENT" || state === "CREATING_CHECKOUT") {
@@ -199,6 +347,13 @@ export function sanitizeOutput(text: string, state?: ScmState): string {
     }
   }
 
+  /* Post-generation slot echo check */
+  if (collected?.slotFormatted && !sanitized.includes(collected.slotFormatted)) {
+    console.warn(
+      `[generate] Generated text does not echo the code-formatted slot string: expected "${collected.slotFormatted}"`,
+    );
+  }
+
   return sanitized;
 }
 
@@ -206,17 +361,18 @@ async function callGenerate(
   router: ModelRouter,
   req: ModelRequest,
   state?: ScmState,
+  collected?: ScmCollected,
 ): Promise<string> {
   try {
     const res = await router.complete("generate", req);
-    return sanitizeOutput(res.text.trim(), state);
+    return sanitizeOutput(res.text.trim(), state, collected);
   } catch {
     try {
       const fallbackRes = await router.complete("generate", {
         ...req,
         temperature: 0.7,
       });
-      return sanitizeOutput(fallbackRes.text.trim(), state);
+      return sanitizeOutput(fallbackRes.text.trim(), state, collected);
     } catch {
       throw new Error("generate failed");
     }
@@ -235,19 +391,39 @@ export async function generate(
   const system = buildSystemPrompt(kb, state);
   const stateInstruction = buildStateInstruction(state, collected, errorKey);
 
+  /* Build injected facts blocks */
+  const factsParts: string[] = [];
+
+  const serviceFacts = buildServiceFactsBlock(collected);
+  if (serviceFacts) factsParts.push(serviceFacts);
+
+  const slotFacts = buildSlotFactsBlock(collected);
+  if (slotFacts) factsParts.push(slotFacts);
+
+  const selectedSlotFacts = buildSelectedSlotFactsBlock(collected);
+  if (selectedSlotFacts) factsParts.push(selectedSlotFacts);
+
+  if (state === "CONFIRMED" || state === "BOOKING_ACUITY") {
+    const confirmedFacts = buildConfirmedFacts(collected);
+    if (confirmedFacts) factsParts.push(confirmedFacts);
+  }
+
+  const userContent = [
+    ...(factsParts.length > 0 ? [factsParts.join("\n\n"), ""] : []),
+    "Current task:",
+    stateInstruction,
+    "",
+    "Conversation so far:",
+    ...compactHistory(history),
+    "",
+    "Generate the next patient-facing message. Return only the message text. Do not include JSON, code fences, or stage labels.",
+  ].join("\n");
+
   const messages: HistoryMessage[] = [
     ...history,
     {
       role: "user",
-      content: [
-        "Current task:",
-        stateInstruction,
-        "",
-        "Conversation so far:",
-        ...compactHistory(history),
-        "",
-        "Generate the next patient-facing message. Return only the message text. Do not include JSON, code fences, or stage labels.",
-      ].join("\n"),
+      content: userContent,
     },
   ];
 
@@ -262,7 +438,7 @@ export async function generate(
   };
 
   try {
-    return await callGenerate(router, req, state);
+    return await callGenerate(router, req, state, collected);
   } catch {
     return getFallbackMessage(state);
   }

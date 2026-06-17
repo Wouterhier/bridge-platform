@@ -36,6 +36,8 @@ export interface ScmCollected extends Partial<Record<ScmField, unknown>> {
   serviceKey?: string | ServiceConfig;
   slotIso?: string;
   slotMenu?: SlotMenuItem[];
+  slotMenuFormatted?: string;
+  slotFormatted?: string;
 }
 
 export interface ScmContext {

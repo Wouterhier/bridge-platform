@@ -6,6 +6,7 @@ import {
   type ScmState,
   type ScmCollected,
   type ScmContext,
+  type SlotMenuItem,
 } from "@romea/scm-flow";
 import { extract } from "@romea/scm-flow";
 import { generate } from "@romea/scm-flow";
@@ -72,6 +73,26 @@ interface ConversationRow {
 
 /* Allow extra runtime fields on collected */
 type CollectedWithExtras = ScmCollected & Record<string, unknown>;
+
+/* ── Slot formatting ──────────────────────────────────────────────────── */
+const NZ_TIMEZONE = "Pacific/Auckland";
+
+function formatSlotForDisplay(isoString: string, timezone: string): string {
+  const d = new Date(isoString);
+  return (
+    new Intl.DateTimeFormat("en-NZ", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: timezone,
+    }).format(d) +
+    " " +
+    timezone
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  Holding-message templates                                          */
@@ -368,6 +389,20 @@ export class ConversationService {
     let nextState = transition.state;
     let collected = transition.collected as CollectedWithExtras;
 
+    /* 6b. Store formatted slot when patient selected one */
+    if (
+      currentState === "AWAITING_SELECTION" &&
+      collected.slotIso &&
+      Array.isArray(collected.slotMenu)
+    ) {
+      const selected = (collected.slotMenu as SlotMenuItem[]).find(
+        (s) => s.iso === collected.slotIso,
+      );
+      if (selected?.formatted) {
+        collected = { ...collected, slotFormatted: selected.formatted };
+      }
+    }
+
     /* 7. Handle special states (with holding-message support) */
     if (nextState === "SHOWING_SLOTS") {
       const slotsResult = await this.handleShowingSlots(
@@ -531,10 +566,14 @@ export class ConversationService {
         clearTimeout(timer);
         const slotMenu = (slots ?? []).slice(0, 5).map((s) => ({
           iso: s.time,
+          formatted: formatSlotForDisplay(s.time, NZ_TIMEZONE),
         }));
+        const slotMenuFormatted = slotMenu
+          .map((s, i) => `${i + 1}. ${s.formatted}`)
+          .join("\n");
         return {
           state: "AWAITING_SELECTION",
-          collected: { ...collected, slotMenu },
+          collected: { ...collected, slotMenu, slotMenuFormatted },
         };
       } catch (err) {
         clearTimeout(timer);
@@ -543,10 +582,16 @@ export class ConversationService {
     }
 
     const slots = await fetchPromise;
-    const slotMenu = (slots ?? []).slice(0, 5).map((s) => ({ iso: s.time }));
+    const slotMenu = (slots ?? []).slice(0, 5).map((s) => ({
+      iso: s.time,
+      formatted: formatSlotForDisplay(s.time, NZ_TIMEZONE),
+    }));
+    const slotMenuFormatted = slotMenu
+      .map((s, i) => `${i + 1}. ${s.formatted}`)
+      .join("\n");
     return {
       state: "AWAITING_SELECTION",
-      collected: { ...collected, slotMenu },
+      collected: { ...collected, slotMenu, slotMenuFormatted },
     };
   }
 

@@ -159,6 +159,7 @@ export function validateService(raw: string): ValidationResult<ServiceConfig> {
 
 export interface SlotMenuItem {
   iso: string;
+  formatted?: string;
 }
 
 export function validateSlotSelection(
