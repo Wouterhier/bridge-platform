@@ -1,0 +1,23 @@
+[Unit]
+Description=SelfCareMen Conversation Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/selfcaremen/bridge-platform
+ExecStart=/usr/bin/node /opt/selfcaremen/bridge-platform/clients/scm/service/dist/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/selfcaremen/bridge-platform/clients/scm/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/selfcaremen/bridge-platform
+
+[Install]
+WantedBy=multi-user.target

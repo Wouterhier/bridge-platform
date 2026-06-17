@@ -16,9 +16,9 @@ export const fallbackMessages: Record<ScmState, string> = {
   AWAITING_SELECTION:
     "Please pick one of the slots I shared. Just reply with the time that works for you.",
   CREATING_CHECKOUT:
-    "I am preparing your secure payment link. One moment please.",
+    "I am preparing your secure payment link. Your slot is held while you complete payment. One moment please.",
   AWAITING_PAYMENT:
-    "Your payment is still pending. Once completed, I will confirm your appointment straight away.",
+    "Your slot is held. Please complete payment via the link I sent. Once payment clears, I will confirm your appointment straight away.",
   BOOKING_ACUITY:
     "I am finalising your booking in our calendar. One moment please.",
   CONFIRMED:

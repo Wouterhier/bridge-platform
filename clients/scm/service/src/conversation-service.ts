@@ -1,0 +1,764 @@
+import { Pool } from "pg";
+import type { ModelRouter } from "@romea/model-router";
+import { createEngine } from "@romea/state-machine";
+import {
+  createScmStateMachineConfig,
+  type ScmState,
+  type ScmCollected,
+  type ScmContext,
+} from "@romea/scm-flow";
+import { extract } from "@romea/scm-flow";
+import { generate } from "@romea/scm-flow";
+import { getFallbackMessage } from "@romea/scm-flow";
+import { shouldEscalate } from "@romea/scm-flow";
+import { getService, isPaidService } from "@romea/scm-flow";
+import type { createGhlClient } from "@romea/ghl-client";
+import type { createAcuityClient } from "@romea/acuity-client";
+import { mapIntakeFields } from "@romea/acuity-client";
+import type { createStripeClient } from "@romea/stripe-client";
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
+
+export interface InboundMessage {
+  id: string;
+  body: string;
+  direction: string;
+  type: string;
+}
+
+export interface InboundPayload {
+  contact_id: string;
+  location_id: string;
+  message: InboundMessage;
+}
+
+export interface HandlerResult {
+  sent: boolean;
+  reply?: string;
+  reason?: string;
+}
+
+export interface ConversationServiceConfig {
+  db: Pool;
+  ghl: ReturnType<typeof createGhlClient>;
+  acuity: ReturnType<typeof createAcuityClient>;
+  stripe: ReturnType<typeof createStripeClient>;
+  router: ModelRouter;
+  debounceMs: number;
+  holdingThresholdMs: number;
+  ghlPipelineId: string;
+  stripeSuccessUrl: string;
+  stripeCancelUrl: string;
+}
+
+interface ConversationRow {
+  id: string;
+  contact_id: string;
+  location_id: string;
+  current_state: string;
+  collected_fields: Record<string, unknown>;
+  context: Record<string, unknown>;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/* Allow extra runtime fields on collected */
+type CollectedWithExtras = ScmCollected & Record<string, unknown>;
+
+/* ------------------------------------------------------------------ */
+/*  Holding-message templates                                          */
+/* ------------------------------------------------------------------ */
+
+const holdingTemplates = [
+  "Just a moment while I check availability for you.",
+  "One moment please — I am pulling up the latest slots.",
+  "Give me a second to confirm that with the calendar.",
+];
+
+function pickHoldingTemplate(): string {
+  const idx = Math.floor(Math.random() * holdingTemplates.length);
+  return holdingTemplates[idx];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Stage mapping                                                      */
+/* ------------------------------------------------------------------ */
+
+const STAGE_NEW_LEAD = "26763fc3-9013-42f6-a3cd-b254bf61f467";
+const STAGE_AI_REPLIED = "6459bbb1-4517-4383-b4cb-dffe867f4c54";
+const STAGE_ELIGIBILITY_BOOKED = "b000d5c7-de71-4997-b263-74162c416736";
+const STAGE_PAID_BOOKED = "750a6c84-d60f-424a-ac88-876d06fa362d";
+const STAGE_HUMAN_TOUCH = "d1cb71e3-4e11-4b7b-bffc-a6c574a9c5f4";
+
+function stageIdForState(
+  state: ScmState,
+  serviceKey?: string,
+): string | undefined {
+  switch (state) {
+    case "NEW":
+      return STAGE_NEW_LEAD;
+    case "COLLECTING_NAME":
+    case "COLLECTING_PHONE":
+    case "COLLECTING_EMAIL":
+    case "SELECTING_SERVICE":
+    case "SHOWING_SLOTS":
+    case "AWAITING_SELECTION":
+    case "CREATING_CHECKOUT":
+    case "AWAITING_PAYMENT":
+      return STAGE_AI_REPLIED;
+    case "BOOKING_ACUITY":
+      return STAGE_ELIGIBILITY_BOOKED;
+    case "CONFIRMED":
+      if (serviceKey && !isPaidService(serviceKey)) {
+        return STAGE_ELIGIBILITY_BOOKED;
+      }
+      return STAGE_PAID_BOOKED;
+    default:
+      return undefined;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  DB helpers                                                         */
+/* ------------------------------------------------------------------ */
+
+async function isMessageProcessed(db: Pool, messageId: string): Promise<boolean> {
+  const result = await db.query<{ exists: boolean }>(
+    `SELECT EXISTS(SELECT 1 FROM processed_messages WHERE message_id = $1)`,
+    [messageId],
+  );
+  return result.rows[0]?.exists ?? false;
+}
+
+async function markMessageProcessed(
+  db: Pool,
+  messageId: string,
+  contactId: string,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO processed_messages (message_id, contact_id) VALUES ($1, $2)
+     ON CONFLICT (message_id) DO NOTHING`,
+    [messageId, contactId],
+  );
+}
+
+async function shouldDebounce(
+  db: Pool,
+  contactId: string,
+  debounceMs: number,
+): Promise<boolean> {
+  const result = await db.query<{ processed_at: Date }>(
+    `SELECT processed_at FROM processed_messages
+     WHERE contact_id = $1
+     ORDER BY processed_at DESC
+     LIMIT 1`,
+    [contactId],
+  );
+  if (result.rows.length === 0) return false;
+  const lastProcessed = new Date(result.rows[0].processed_at).getTime();
+  return Date.now() - lastProcessed < debounceMs;
+}
+
+async function findOrCreateConversation(
+  db: Pool,
+  locationId: string,
+  contactId: string,
+): Promise<ConversationRow> {
+  const existing = await db.query<ConversationRow>(
+    `SELECT * FROM conversations WHERE location_id = $1 AND contact_id = $2 LIMIT 1`,
+    [locationId, contactId],
+  );
+  if (existing.rows.length > 0) {
+    return existing.rows[0];
+  }
+
+  const inserted = await db.query<ConversationRow>(
+    `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
+     VALUES ($1, $2, 'NEW', '{}', '{}')
+     RETURNING *`,
+    [locationId, contactId],
+  );
+  return inserted.rows[0];
+}
+
+async function updateConversation(
+  db: Pool,
+  conversationId: string,
+  state: ScmState,
+  collected: ScmCollected,
+  context: Record<string, unknown>,
+): Promise<void> {
+  await db.query(
+    `UPDATE conversations
+     SET current_state = $1,
+         collected_fields = $2,
+         context = $3,
+         updated_at = now()
+     WHERE id = $4`,
+    [state, JSON.stringify(collected), JSON.stringify(context), conversationId],
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Channel mapping                                                    */
+/* ------------------------------------------------------------------ */
+
+function mapMessageTypeToChannel(type: string): "sms" | "live_chat" | "whatsapp" | "email" {
+  const lower = type.toLowerCase();
+  if (lower === "sms") return "sms";
+  if (lower === "live_chat" || lower === "livechat") return "live_chat";
+  if (lower === "whatsapp") return "whatsapp";
+  return "sms";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Extraction helper                                                  */
+/* ------------------------------------------------------------------ */
+
+async function tryExtract(
+  state: ScmState,
+  rawMessage: string,
+  collected: ScmCollected,
+  router: ModelRouter,
+): Promise<string | null> {
+  const hint = await extract(state, rawMessage, [], collected, { router });
+  if (!hint) return null;
+
+  switch (state) {
+    case "COLLECTING_NAME":
+      if (hint.fullName) return hint.fullName;
+      if (hint.firstName && hint.lastName) return `${hint.firstName} ${hint.lastName}`;
+      return null;
+    case "COLLECTING_PHONE":
+      if (hint.phone) return hint.phone;
+      return null;
+    case "COLLECTING_EMAIL":
+      if (hint.email) return hint.email;
+      return null;
+    case "SELECTING_SERVICE":
+      if (hint.serviceKey) return hint.serviceKey;
+      return null;
+    case "AWAITING_SELECTION":
+      if (hint.slotIso) return hint.slotIso;
+      return null;
+    default:
+      return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Conversation Service                                               */
+/* ------------------------------------------------------------------ */
+
+export class ConversationService {
+  private engine = createEngine(createScmStateMachineConfig());
+
+  constructor(private deps: ConversationServiceConfig) {}
+
+  async health(): Promise<{ ok: boolean; db: boolean }> {
+    try {
+      await this.deps.db.query("SELECT 1");
+      return { ok: true, db: true };
+    } catch {
+      return { ok: false, db: false };
+    }
+  }
+
+  async handleInbound(payload: InboundPayload): Promise<HandlerResult> {
+    const { db, ghl, acuity, stripe, router, debounceMs, holdingThresholdMs } =
+      this.deps;
+    const { contact_id, location_id, message } = payload;
+    const messageId = message.id;
+    const rawMessage = message.body;
+
+    /* 1. Dedup */
+    const alreadyProcessed = await isMessageProcessed(db, messageId);
+    if (alreadyProcessed) {
+      return { sent: false, reason: "dedup" };
+    }
+
+    /* 2. Debounce */
+    const debounced = await shouldDebounce(db, contact_id, debounceMs);
+    if (debounced) {
+      return { sent: false, reason: "debounce" };
+    }
+
+    /* 3. Load / create conversation */
+    let conversation = await findOrCreateConversation(db, location_id, contact_id);
+
+    /* 4. Escalation guard */
+    const escalation = shouldEscalate(
+      rawMessage,
+      (conversation.collected_fields.serviceKey as string | undefined) ?? "",
+    );
+    if (escalation.escalate) {
+      await this.escalate(location_id, contact_id, conversation, escalation.reason ?? "");
+      return { sent: false, reason: `escalated:${escalation.reason ?? ""}` };
+    }
+
+    /* 5. Extract if needed */
+    const currentState = conversation.current_state as ScmState;
+    const extracted = await tryExtract(
+      currentState,
+      rawMessage,
+      conversation.collected_fields as ScmCollected,
+      router,
+    );
+    const enrichedRawMessage = extracted ?? rawMessage;
+
+    /* 6. Run state machine */
+    const context: ScmContext =
+      (conversation.context as ScmContext) ?? {};
+    const transition = await this.engine.process({
+      rawMessage: enrichedRawMessage,
+      conversation: {
+        currentState,
+        collected: { ...conversation.collected_fields },
+      },
+      context,
+    });
+
+    let nextState = transition.state;
+    let collected = transition.collected as CollectedWithExtras;
+
+    /* 7. Handle special states (with holding-message support) */
+    if (nextState === "SHOWING_SLOTS") {
+      const slotsResult = await this.handleShowingSlots(
+        acuity,
+        collected,
+        conversation,
+        holdingThresholdMs,
+        location_id,
+        contact_id,
+      );
+      nextState = slotsResult.state;
+      collected = slotsResult.collected;
+    }
+
+    if (nextState === "CREATING_CHECKOUT") {
+      const checkoutResult = await this.handleCreatingCheckout(
+        stripe,
+        db,
+        collected,
+        conversation,
+        holdingThresholdMs,
+        location_id,
+        contact_id,
+      );
+      nextState = checkoutResult.state;
+      collected = checkoutResult.collected;
+    }
+
+    if (nextState === "BOOKING_ACUITY") {
+      const bookingResult = await this.handleBookingAcuity(
+        acuity,
+        db,
+        collected,
+        conversation,
+        location_id,
+        contact_id,
+      );
+      nextState = bookingResult.state;
+      collected = bookingResult.collected;
+    }
+
+    /* 8. Generate reply */
+    let replyText: string;
+    try {
+      replyText = await generate(
+        nextState,
+        collected as ScmCollected,
+        [],
+        undefined,
+        transition.validationError,
+        { router },
+      );
+    } catch {
+      replyText = getFallbackMessage(nextState);
+    }
+
+    /* Append payment link when relevant */
+    if (nextState === "AWAITING_PAYMENT" || nextState === "CREATING_CHECKOUT") {
+      const paymentLink = collected._paymentLink as string | undefined;
+      if (paymentLink) {
+        replyText = `${replyText}\n\n${paymentLink}`;
+      }
+    }
+
+    /* 9. Insert processed_messages BEFORE sending reply */
+    await markMessageProcessed(db, messageId, contact_id);
+
+    /* 10. Send reply */
+    const channel = mapMessageTypeToChannel(message.type);
+    try {
+      await ghl.sendMessage(location_id, contact_id, {
+        message: replyText,
+        channel,
+      });
+    } catch (err) {
+      console.error("[conversation-service] GHL send failed:", err);
+      /* Do not throw — we already recorded processed_messages so the
+         patient will not get duplicate retries.  */
+    }
+
+    /* 11. Update conversation state in Postgres */
+    const updatedContext: Record<string, unknown> = {
+      ...conversation.context,
+      lastInboundMessageId: messageId,
+      holdingMessageSent: false, /* reset for next exchange */
+    };
+    await updateConversation(db, conversation.id, nextState, collected as ScmCollected, updatedContext);
+
+    /* 12. Update GHL opportunity stage */
+    await this.updateStage(location_id, contact_id, nextState, collected as ScmCollected);
+
+    return { sent: true, reply: replyText };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  SHOWING_SLOTS → fetch Acuity slots                               */
+  /* ---------------------------------------------------------------- */
+  private async handleShowingSlots(
+    acuity: ReturnType<typeof createAcuityClient>,
+    collected: CollectedWithExtras,
+    conversation: ConversationRow,
+    holdingThresholdMs: number,
+    locationId: string,
+    contactId: string,
+  ): Promise<{ state: ScmState; collected: CollectedWithExtras }> {
+    const service =
+      typeof collected.serviceKey === "string"
+        ? getService(collected.serviceKey)
+        : (collected.serviceKey as { acuityTypeId?: number; calendarId?: string | number } | undefined);
+
+    if (!service?.acuityTypeId) {
+      return { state: "AWAITING_SELECTION", collected };
+    }
+
+    const fetchPromise = acuity.getAvailability(service.acuityTypeId, {
+      calendarID: service.calendarId,
+    });
+
+    const alreadySent =
+      (conversation.context as Record<string, unknown>)?.holdingMessageSent ===
+      true;
+
+    if (!alreadySent) {
+      const timer = setTimeout(async () => {
+        try {
+          await this.deps.ghl.sendMessage(locationId, contactId, {
+            message: pickHoldingTemplate(),
+            channel: "sms",
+          });
+        } catch (e) {
+          console.error("[conversation-service] holding message failed:", e);
+        }
+      }, holdingThresholdMs);
+
+      try {
+        const slots = await fetchPromise;
+        clearTimeout(timer);
+        const slotMenu = (slots ?? []).slice(0, 5).map((s) => ({
+          iso: s.time,
+        }));
+        return {
+          state: "AWAITING_SELECTION",
+          collected: { ...collected, slotMenu },
+        };
+      } catch (err) {
+        clearTimeout(timer);
+        throw err;
+      }
+    }
+
+    const slots = await fetchPromise;
+    const slotMenu = (slots ?? []).slice(0, 5).map((s) => ({ iso: s.time }));
+    return {
+      state: "AWAITING_SELECTION",
+      collected: { ...collected, slotMenu },
+    };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  CREATING_CHECKOUT → Stripe session                               */
+  /* ---------------------------------------------------------------- */
+  private async handleCreatingCheckout(
+    stripe: ReturnType<typeof createStripeClient>,
+    db: Pool,
+    collected: CollectedWithExtras,
+    conversation: ConversationRow,
+    holdingThresholdMs: number,
+    locationId: string,
+    contactId: string,
+  ): Promise<{ state: ScmState; collected: CollectedWithExtras }> {
+    const service =
+      typeof collected.serviceKey === "string"
+        ? getService(collected.serviceKey)
+        : (collected.serviceKey as { key?: string; acuityTypeId?: number; paid?: boolean; price?: number; name?: string; calendarId?: string | number } | undefined);
+    if (!service || !service.paid) {
+      return { state: "BOOKING_ACUITY", collected };
+    }
+
+    const slotIso = collected.slotIso;
+    if (!slotIso) return { state: "AWAITING_SELECTION", collected };
+
+    /* Idempotency: check for existing payment session */
+    const existing = await db.query<{ stripe_session_id: string; status: string }>(
+      `SELECT stripe_session_id, status FROM payment_sessions
+       WHERE conversation_id = $1 AND appointment_type_id = $2 AND slot_iso = $3
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [conversation.id, String(service.acuityTypeId), slotIso],
+    );
+    if (existing.rows.length > 0 && existing.rows[0].status !== "expired") {
+      const session = await stripe.getCheckoutSession(existing.rows[0].stripe_session_id);
+      if (session.url) {
+        return {
+          state: "AWAITING_PAYMENT",
+          collected: {
+            ...collected,
+            _paymentLink: session.url,
+            _stripeSessionId: session.id,
+          },
+        };
+      }
+    }
+
+    const checkoutPromise = stripe.createCheckoutSession({
+      successUrl: this.deps.stripeSuccessUrl,
+      cancelUrl: this.deps.stripeCancelUrl,
+      lineItems: [
+        {
+          amount: (service.price ?? 0) * 100,
+          currency: "nzd",
+          name: service.name,
+        },
+      ],
+      customerEmail: collected.email ?? undefined,
+      clientReferenceId: contactId,
+      metadata: {
+        conversation_id: conversation.id,
+        service_key: service.key ?? "",
+        slot_iso: slotIso,
+      },
+    });
+
+    const alreadySent =
+      (conversation.context as Record<string, unknown>)?.holdingMessageSent ===
+      true;
+
+    if (!alreadySent) {
+      const timer = setTimeout(async () => {
+        try {
+          await this.deps.ghl.sendMessage(locationId, contactId, {
+            message: pickHoldingTemplate(),
+            channel: "sms",
+          });
+        } catch (e) {
+          console.error("[conversation-service] holding message failed:", e);
+        }
+      }, holdingThresholdMs);
+
+      try {
+        const session = await checkoutPromise;
+        clearTimeout(timer);
+        await db.query(
+          `INSERT INTO payment_sessions
+           (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            session.id,
+            session.status ?? "open",
+            slotIso,
+            String(service.acuityTypeId),
+            contactId,
+            conversation.id,
+            `checkout-${conversation.id}-${slotIso}`,
+            JSON.stringify(collected),
+          ],
+        );
+        return {
+          state: "AWAITING_PAYMENT",
+          collected: {
+            ...collected,
+            _paymentLink: session.url,
+            _stripeSessionId: session.id,
+          },
+        };
+      } catch (err) {
+        clearTimeout(timer);
+        throw err;
+      }
+    }
+
+    const session = await checkoutPromise;
+    await db.query(
+      `INSERT INTO payment_sessions
+       (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        session.id,
+        session.status ?? "open",
+        slotIso,
+        String(service.acuityTypeId),
+        contactId,
+        conversation.id,
+        `checkout-${conversation.id}-${slotIso}`,
+        JSON.stringify(collected),
+      ],
+    );
+    return {
+      state: "AWAITING_PAYMENT",
+      collected: {
+        ...collected,
+        _paymentLink: session.url,
+        _stripeSessionId: session.id,
+      },
+    };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  BOOKING_ACUITY → create appointment                               */
+  /* ---------------------------------------------------------------- */
+  private async handleBookingAcuity(
+    acuity: ReturnType<typeof createAcuityClient>,
+    _db: Pool,
+    collected: CollectedWithExtras,
+    conversation: ConversationRow,
+    _locationId: string,
+    _contactId: string,
+  ): Promise<{ state: ScmState; collected: CollectedWithExtras }> {
+    const service =
+      typeof collected.serviceKey === "string"
+        ? getService(collected.serviceKey)
+        : (collected.serviceKey as { key?: string; acuityTypeId?: number } | undefined);
+    if (!service?.acuityTypeId) {
+      return { state: "CONFIRMED", collected };
+    }
+
+    const slotIso = collected.slotIso;
+    if (!slotIso) return { state: "AWAITING_SELECTION", collected };
+
+    const fullName = collected.fullName ?? "";
+    const [firstName, ...lastNameParts] = fullName.split(" ");
+    const lastName = lastNameParts.join(" ");
+
+    const collectedFields = {
+      firstName,
+      lastName,
+      patientName: fullName,
+      email: collected.email,
+      phone: collected.phone,
+    };
+
+    const appointment = await acuity.createAppointment({
+      appointmentTypeID: service.acuityTypeId,
+      datetime: slotIso,
+      firstName,
+      lastName,
+      email: collected.email ?? "",
+      phone: collected.phone,
+      fields: mapIntakeFields(
+        service.key ?? "",
+        collectedFields as Parameters<typeof mapIntakeFields>[1],
+      ),
+      idempotencyKey: `scm-booking-${conversation.id}-${slotIso}`,
+    });
+
+    return {
+      state: "CONFIRMED",
+      collected: {
+        ...collected,
+        _acuityAppointmentId: String(appointment.id),
+      },
+    };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Escalation                                                        */
+  /* ---------------------------------------------------------------- */
+  private async escalate(
+    locationId: string,
+    contactId: string,
+    conversation: ConversationRow,
+    reason: string,
+  ): Promise<void> {
+    const { db, ghl } = this.deps;
+
+    /* Update conversation state */
+    await updateConversation(db, conversation.id, "CONFIRMED", conversation.collected_fields as ScmCollected, {
+      ...conversation.context,
+      escalated: true,
+      escalationReason: reason,
+    } as Record<string, unknown>);
+
+    /* Send escalation notice */
+    try {
+      await ghl.sendMessage(locationId, contactId, {
+        message:
+          "I have passed this to a human coordinator who will be in touch shortly.",
+        channel: "sms",
+      });
+    } catch (e) {
+      console.error("[conversation-service] escalation send failed:", e);
+    }
+
+    /* Update stage */
+    await this.updateStage(locationId, contactId, "CONFIRMED", conversation.collected_fields as ScmCollected, true);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  GHL stage update                                                  */
+  /* ---------------------------------------------------------------- */
+  private async updateStage(
+    locationId: string,
+    contactId: string,
+    state: ScmState,
+    collected: ScmCollected,
+    isEscalation = false,
+  ): Promise<void> {
+    const { ghl, ghlPipelineId } = this.deps;
+
+    try {
+      const opportunities = await ghl.getPipelineOpportunities(
+        locationId,
+        contactId,
+        ghlPipelineId,
+      );
+
+      const serviceKeyRaw = collected.serviceKey;
+      const serviceKeyStr =
+        typeof serviceKeyRaw === "string"
+          ? serviceKeyRaw
+          : (serviceKeyRaw as { key?: string } | undefined)?.key;
+      const targetStageId = isEscalation
+        ? STAGE_HUMAN_TOUCH
+        : stageIdForState(state, serviceKeyStr);
+
+      if (!targetStageId) return;
+
+      if (opportunities.length > 0) {
+        const opp = opportunities[0];
+        await ghl.updateOpportunityStageSafe(
+          locationId,
+          opp.id,
+          targetStageId,
+          opp.pipelineStageId,
+          STAGE_HUMAN_TOUCH,
+        );
+      } else {
+        await ghl.createOpportunity(locationId, {
+          pipelineId: ghlPipelineId,
+          pipelineStageId: targetStageId,
+          locationId,
+          contactId,
+          status: "open",
+        });
+      }
+    } catch (err) {
+      console.error("[conversation-service] stage update failed:", err);
+    }
+  }
+}

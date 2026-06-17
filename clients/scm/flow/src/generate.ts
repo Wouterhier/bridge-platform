@@ -41,6 +41,7 @@ function buildSystemPrompt(kb: string): string {
     "- No exclamation points in opening lines.",
     "- No semicolons in SMS/chat/WhatsApp output.",
     "- Keep messages concise and easy to read on a phone.",
+    "- If payment has not yet cleared, tell the patient their slot is HELD (e.g. 'held for 30 minutes'). Never say the slot is 'set', 'confirmed', or 'booked' before payment clears. Avoid the words 'confirmed' and 'is set for' entirely in pre-payment messages.",
     "",
     "## Knowledge base",
     kb,
@@ -104,12 +105,12 @@ function buildStateInstruction(
       break;
     case "CREATING_CHECKOUT":
       parts.push(
-        "Tell the patient you are preparing a secure payment link for their appointment.",
+        "Tell the patient you are preparing a secure payment link for their appointment. Remind them their slot is held while payment is pending. Do not say the appointment is confirmed, set, or booked.",
       );
       break;
     case "AWAITING_PAYMENT":
       parts.push(
-        "The payment is pending. Share the payment link and explain what happens next.",
+        "The payment is pending. Share the payment link and remind the patient their slot is held. Do not say the appointment is confirmed, set, or booked.",
       );
       break;
     case "BOOKING_ACUITY":

@@ -135,6 +135,68 @@ describe("generate() style lint", () => {
   );
 });
 
+const paymentNudgeCollected: ScmCollected = {
+  fullName: "John Smith",
+  serviceKey: "trt_initial",
+  slotIso: "2026-06-20T09:00:00+12:00",
+};
+
+function assertHeldLanguage(text: string): string[] {
+  const issues: string[] = [];
+  const lower = text.toLowerCase();
+  if (!lower.includes("held")) {
+    issues.push("missing 'held'");
+  }
+  if (lower.includes("confirmed") || lower.includes("is set for") || lower.includes("is set")) {
+    issues.push("uses pre-payment confirmed/set language");
+  }
+  return issues;
+}
+
+describe("generate() payment-nudge held language", () => {
+  it(
+    "primary model (Sonnet) uses held language for AWAITING_PAYMENT",
+    async () => {
+      const router = makeRouter({
+        generateModel: "anth_api/claude-sonnet-4-6",
+        generateFallbackModel: "anth_api/claude-sonnet-4-6",
+      });
+      const text = await generate("AWAITING_PAYMENT", paymentNudgeCollected, [], undefined, undefined, { router });
+      console.log("Sonnet payment nudge:", text);
+      expect(assertHeldLanguage(text)).toEqual([]);
+    },
+    longTimeout,
+  );
+
+  it(
+    "fallback model (GLM-5.1) uses held language for AWAITING_PAYMENT",
+    async () => {
+      const router = makeRouter({
+        generateModel: "dash_intl/glm-5.1",
+        generateFallbackModel: "dash_intl/glm-5.1",
+      });
+      const text = await generate("AWAITING_PAYMENT", paymentNudgeCollected, [], undefined, undefined, { router });
+      console.log("GLM-5.1 payment nudge:", text);
+      expect(assertHeldLanguage(text)).toEqual([]);
+    },
+    longTimeout,
+  );
+
+  it(
+    "primary model uses held language for CREATING_CHECKOUT",
+    async () => {
+      const router = makeRouter({
+        generateModel: "anth_api/claude-sonnet-4-6",
+        generateFallbackModel: "anth_api/claude-sonnet-4-6",
+      });
+      const text = await generate("CREATING_CHECKOUT", paymentNudgeCollected, [], undefined, undefined, { router });
+      console.log("Sonnet creating-checkout:", text);
+      expect(assertHeldLanguage(text)).toEqual([]);
+    },
+    longTimeout,
+  );
+});
+
 describe("generate() cache billing", () => {
   it(
     "second identical Anthropic generate call bills fewer input tokens via cache read",
