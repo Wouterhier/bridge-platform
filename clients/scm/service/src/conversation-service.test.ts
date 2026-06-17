@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeAll, afterAll, beforeEach } from "vites
 import { Pool } from "pg";
 import { config } from "dotenv";
 import { resolve } from "node:path";
-import { ConversationService, type InboundPayload } from "./conversation-service.js";
+import { ConversationService, recoverUnsentReplies, type InboundPayload } from "./conversation-service.js";
 import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
@@ -592,5 +592,190 @@ describe("conversation-service", () => {
       );
     });
     expect(holdingCalls.length).toBe(0);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Test 6 — Crash between processed_messages commit and send       */
+  /* ---------------------------------------------------------------- */
+  it("leaves sent_at NULL when GHL send fails and recovers on restart", async () => {
+    const ghl = createMockGhlClient();
+    /* First call throws, second succeeds */
+    let callCount = 0;
+    (ghl.sendMessage as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error("GHL transient error");
+      }
+      return {};
+    });
+
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    const contactId = "test-contact-crash";
+
+    /* Seed conversation at COLLECTING_NAME */
+    await db.query(
+      `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, 'COLLECTING_NAME', '{}', '{}')`,
+      ["test-loc-001", contactId],
+    );
+
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: contactId,
+        message: { id: "crash-1", body: "John Smith", direction: "inbound", type: "SMS" },
+      }),
+    );
+    /* sendMessage threw, but handler should not throw */
+    expect(result.sent).toBe(true);
+
+    /* Assert processed_messages row exists with sent_at IS NULL */
+    const pmResult = await db.query(
+      `SELECT sent_at, send_attempts, send_payload
+       FROM processed_messages
+       WHERE message_id = $1`,
+      ["crash-1"],
+    );
+    expect(pmResult.rows.length).toBe(1);
+    expect(pmResult.rows[0].sent_at).toBeNull();
+    expect(pmResult.rows[0].send_attempts).toBe(1);
+    expect(pmResult.rows[0].send_payload).toMatchObject({
+      message: expect.any(String),
+      channel: "sms",
+      locationId: "test-loc-001",
+    });
+
+    /* Simulate service restart: call recoverUnsentReplies */
+    await recoverUnsentReplies(db, ghl);
+
+    /* Assert ghl.sendMessage was called again with the same payload */
+    expect(callCount).toBe(2);
+    const sendCalls = (ghl.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const recoveryCall = sendCalls[sendCalls.length - 1];
+    expect((recoveryCall[2] as { message?: string })?.message).toBe(pmResult.rows[0].send_payload.message);
+
+    /* Assert sent_at is now set */
+    const pmResultAfter = await db.query(
+      `SELECT sent_at FROM processed_messages WHERE message_id = $1`,
+      ["crash-1"],
+    );
+    expect(pmResultAfter.rows[0].sent_at).not.toBeNull();
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Test 7 — Already-sent message is not re-sent                    */
+  /* ---------------------------------------------------------------- */
+  it("does not re-send already-sent messages during recovery", async () => {
+    const ghl = createMockGhlClient();
+    const contactId = "test-contact-already-sent";
+
+    /* Insert a processed_messages row that is already sent */
+    await db.query(
+      `INSERT INTO processed_messages (message_id, contact_id, sent_at, send_payload, send_attempts)
+       VALUES ($1, $2, now(), $3, 1)`,
+      ["already-sent-1", contactId, JSON.stringify({ message: "Hello", channel: "sms", locationId: "test-loc-001" })],
+    );
+
+    await recoverUnsentReplies(db, ghl);
+
+    /* Assert ghl.sendMessage was NOT called */
+    expect(ghl.sendMessage).not.toHaveBeenCalled();
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Test 8 — Restart resilience with recovery                       */
+  /* ---------------------------------------------------------------- */
+  it("recovers unsent replies after simulated restart", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const contactId = "test-contact-restart-recovery";
+
+    /* Seed conversation at COLLECTING_EMAIL */
+    await db.query(
+      `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, 'COLLECTING_EMAIL', $3, '{}')`,
+      [
+        "test-loc-001",
+        contactId,
+        JSON.stringify({ fullName: "John Smith", phone: "+64210000000" }),
+      ],
+    );
+
+    const serviceA = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    /* Simulate inbound email — this will generate and store reply, then send it */
+    const resultA = await serviceA.handleInbound(
+      makePayload({
+        contact_id: contactId,
+        message: { id: "restart-recovery-1", body: "john.smith@selfcaremen.co.nz", direction: "inbound", type: "SMS" },
+      }),
+    );
+    expect(resultA.sent).toBe(true);
+
+    /* Simulate crash: manually reset sent_at to NULL (as if send succeeded in test but we want to test recovery) */
+    await db.query(
+      `UPDATE processed_messages SET sent_at = NULL WHERE message_id = $1`,
+      ["restart-recovery-1"],
+    );
+
+    /* Simulate restart: new service instance + recovery */
+    const serviceB = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    await recoverUnsentReplies(db, ghl);
+
+    /* Assert the reply was re-sent */
+    const sendCalls = (ghl.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const recoveryCalls = sendCalls.filter(
+      (call: unknown[]) => call[1] === contactId,
+    );
+    /* One call from original handleInbound, one from recovery */
+    expect(recoveryCalls.length).toBe(2);
+
+    /* Assert sent_at is now set */
+    const pmResult = await db.query(
+      `SELECT sent_at FROM processed_messages WHERE message_id = $1`,
+      ["restart-recovery-1"],
+    );
+    expect(pmResult.rows[0].sent_at).not.toBeNull();
   });
 });

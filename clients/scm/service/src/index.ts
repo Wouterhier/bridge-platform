@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { resolve } from "node:path";
 import express from "express";
 import { Pool } from "pg";
-import { ConversationService } from "./conversation-service.js";
+import { ConversationService, recoverUnsentReplies } from "./conversation-service.js";
 import { createGhlClient } from "@romea/ghl-client";
 import { createAcuityClient } from "@romea/acuity-client";
 import { createStripeClient } from "@romea/stripe-client";
@@ -53,6 +53,9 @@ const service = new ConversationService({
   stripeSuccessUrl: STRIPE_SUCCESS_URL,
   stripeCancelUrl: STRIPE_CANCEL_URL,
 });
+
+/* Recover any unsent replies from previous crash before accepting traffic */
+await recoverUnsentReplies(db, ghl);
 
 const app = express();
 app.use(express.json());
