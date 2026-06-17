@@ -287,21 +287,29 @@ function stripUnsanctionedContactInfo(
   // Strip entire sentences containing email patterns
   result = result.replace(/[^.!?\n]*\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b[^.!?\n]*/gi, "");
 
-  // Remove NZ/international phone patterns
-  const phoneRegex =
-    /(?:\+\d{1,3}[-.\s()]*)?\(?\d{2,4}\)?[-.\s]*\d{3,4}[-.\s]*\d{3,4}/g;
-  result = result.replace(phoneRegex, (match) => {
-    const digits = match.replace(/\D/g, "");
-    if (digits.length >= 8 && digits.length <= 15) {
-      // Don't strip bare sequences of digits without phone-like separators
-      if (!match.startsWith("+") && !/[()\s-]/.test(match)) {
-        return match;
+  // Remove whole sentences containing phone patterns
+  result = result.replace(/[^.!?\n]+[.!?]*/g, (match) => {
+    const phoneMatch = match.match(
+      /(?:\+\d{1,3}[-.\s()]*)?\(?\d{2,4}\)?[-.\s]*\d{3,4}[-.\s]*\d{3,4}/,
+    );
+    if (phoneMatch) {
+      const digits = phoneMatch[0].replace(/\D/g, "");
+      if (digits.length >= 8 && digits.length <= 15) {
+        // Don't strip bare sequences of digits without phone-like separators
+        const raw = phoneMatch[0];
+        if (!raw.startsWith("+") && !/[()\s-]/.test(raw)) {
+          return match;
+        }
+        console.warn(
+          `[generate] Stripped sentence with phone: ${match.trim().slice(0, 60)}`,
+        );
+        return "";
       }
-      console.warn(`[generate] Stripped phone: ${match}`);
-      return "[phone removed]";
     }
     return match;
   });
+  // Collapse double blank lines/whitespace after stripping
+  result = result.replace(/\n{3,}/g, "\n\n").trim();
 
   // Strip clinician names if they appear
   if (containsClinicianName(result)) {

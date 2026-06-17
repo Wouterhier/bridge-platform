@@ -196,7 +196,7 @@ describe("style rules — fallback model (GLM-5.1)", () => {
       console.log("GLM-5.1 CREATING_CHECKOUT:", text);
       expect(assertHeldLanguage(text)).toEqual([]);
     },
-    longTimeout,
+    360000,
   );
 });
 
