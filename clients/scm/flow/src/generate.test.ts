@@ -179,7 +179,7 @@ describe("generate() payment-nudge held language", () => {
       console.log("GLM-5.1 payment nudge:", text);
       expect(assertHeldLanguage(text)).toEqual([]);
     },
-    longTimeout,
+    120000,
   );
 
   it(
