@@ -16,6 +16,7 @@ import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
 import type { ModelRouter } from "@romea/model-router";
+import { recoverUnsentReplies } from "@romea/bridge-db";
 import { createHmac } from "node:crypto";
 import Stripe from "stripe";
 
@@ -604,5 +605,139 @@ describe("payment-service", () => {
     /* Assert no side effects */
     expect(acuity.createAppointment).not.toHaveBeenCalled();
     expect(ghl.sendMessage).not.toHaveBeenCalled();
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Test 6 — Crash after booking, before confirmation send           */
+  /* ---------------------------------------------------------------- */
+  it("recovers and sends confirmation after crash between booking and send", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient({ appointment: { id: 123 } });
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const contactId = "test-contact-crash-confirm";
+    const conversationId = "550e8400-e29b-41d4-a716-446655440006";
+
+    /* Seed conversation */
+    await db.query(
+      `INSERT INTO conversations (id, location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, $3, 'AWAITING_PAYMENT', $4, '{}')`,
+      [
+        conversationId,
+        "loc-001",
+        contactId,
+        JSON.stringify({
+          fullName: "Crash Test",
+          phone: "+64210000005",
+          email: "crash@selfcaremen.co.nz",
+          serviceKey: "trt_initial",
+          slotIso: "2026-06-20T14:00:00+12:00",
+        }),
+      ],
+    );
+
+    /* Seed payment session */
+    await db.query(
+      `INSERT INTO payment_sessions
+       (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        "cs_test_crash_confirm",
+        "pending",
+        "2026-06-20T14:00:00+12:00",
+        "53224493",
+        contactId,
+        conversationId,
+        "checkout-test-crash-confirm",
+        JSON.stringify({
+          fullName: "Crash Test",
+          phone: "+64210000005",
+          email: "crash@selfcaremen.co.nz",
+          serviceKey: "trt_initial",
+          slotIso: "2026-06-20T14:00:00+12:00",
+        }),
+      ],
+    );
+
+    /* Mock GHL send to throw on first call (simulates crash) */
+    let sendAttempts = 0;
+    (ghl.sendMessage as ReturnType<typeof vi.fn>).mockImplementation(async (_loc: string, _cid: string, _payload: unknown) => {
+      sendAttempts++;
+      if (sendAttempts === 1) {
+        throw new Error("Simulated GHL crash");
+      }
+    });
+
+    const service = new PaymentService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      ghlPipelineId: "pipe-001",
+      ghlLocationId: "loc-001",
+      stripeWebhookSecret: "whsec_test",
+      pollIntervalMs: 30000,
+    });
+
+    const event = {
+      id: "evt_crash_confirm",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_test_crash_confirm",
+          customer_email: "crash@selfcaremen.co.nz",
+          metadata: {
+            conversation_id: conversationId,
+            service_key: "trt_initial",
+            slot_iso: "2026-06-20T14:00:00+12:00",
+            contact_id: contactId,
+            appointment_type_id: "53224493",
+            idempotency_key: "checkout-test-crash-confirm",
+          },
+        },
+      },
+    };
+    const payload = JSON.stringify(event);
+    const signature = makeStripeSignature(payload, "whsec_test");
+
+    /* Webhook succeeds (booking done) but GHL send throws */
+    await service.handleWebhook(Buffer.from(payload), signature);
+
+    /* Assert payment_sessions.status = 'paid' and acuity_appointment_id = 'appt-123' */
+    const psResult = await db.query(
+      `SELECT id, status, acuity_appointment_id FROM payment_sessions WHERE stripe_session_id = $1`,
+      ["cs_test_crash_confirm"],
+    );
+    expect(psResult.rows[0].status).toBe("paid");
+    expect(psResult.rows[0].acuity_appointment_id).toBe("123");
+
+    /* Assert processed_messages row exists with sent_at IS NULL */
+    const pmResult = await db.query(
+      `SELECT sent_at, send_payload FROM processed_messages WHERE message_id = $1`,
+      [`scm-confirm-${psResult.rows[0].id}`],
+    );
+    expect(pmResult.rows.length).toBe(1);
+    expect(pmResult.rows[0].sent_at).toBeNull();
+    expect(pmResult.rows[0].send_payload.message).toContain("confirmed");
+
+    /* Simulate payment-service restart: recover unsent replies */
+    await recoverUnsentReplies(db, (locationId, contactId, payload) =>
+      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+    );
+
+    /* Assert ghlClient.sendMessage called again with confirmation */
+    expect(ghl.sendMessage).toHaveBeenCalledTimes(2);
+    const secondCall = (ghl.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(secondCall[1]).toBe(contactId);
+    expect(secondCall[2].message).toContain("confirmed");
+
+    /* Assert sent_at is now set */
+    const pmResultAfter = await db.query(
+      `SELECT sent_at FROM processed_messages WHERE message_id = $1`,
+      [`scm-confirm-${psResult.rows[0].id}`],
+    );
+    expect(pmResultAfter.rows[0].sent_at).not.toBeNull();
   });
 });

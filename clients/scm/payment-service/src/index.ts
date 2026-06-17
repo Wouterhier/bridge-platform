@@ -8,6 +8,7 @@ import { createStripeClient } from "@romea/stripe-client";
 import { loadConfig } from "@romea/model-router";
 import { createRouter } from "@romea/scm-flow";
 import { PaymentService, WebhookError } from "./payment-service.js";
+import { recoverUnsentReplies } from "@romea/bridge-db";
 
 /* Load .env from clients/scm/.env */
 config({ path: resolve(process.cwd(), "clients/scm/.env") });
@@ -51,6 +52,12 @@ const service = new PaymentService({
   stripeWebhookSecret: STRIPE_WEBHOOK_SECRET,
   pollIntervalMs: POLL_INTERVAL_MS,
 });
+
+/* Recover any unsent confirmation messages from a previous crash
+   before we start accepting new webhooks. */
+await recoverUnsentReplies(db, (locationId, contactId, payload) =>
+  ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+);
 
 /* Start background poller for webhook-fallback idempotency */
 service.startPoller();

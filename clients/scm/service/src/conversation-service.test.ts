@@ -661,7 +661,9 @@ describe("conversation-service", () => {
     });
 
     /* Simulate service restart: call recoverUnsentReplies */
-    await recoverUnsentReplies(db, ghl);
+    await recoverUnsentReplies(db, (locationId, contactId, payload) =>
+      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+    );
 
     /* Assert ghl.sendMessage was called again with the same payload */
     expect(callCount).toBe(2);
@@ -691,7 +693,9 @@ describe("conversation-service", () => {
       ["already-sent-1", contactId, JSON.stringify({ message: "Hello", channel: "sms", locationId: "test-loc-001" })],
     );
 
-    await recoverUnsentReplies(db, ghl);
+    await recoverUnsentReplies(db, (locationId, contactId, payload) =>
+      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+    );
 
     /* Assert ghl.sendMessage was NOT called */
     expect(ghl.sendMessage).not.toHaveBeenCalled();
@@ -761,7 +765,9 @@ describe("conversation-service", () => {
       stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
     });
 
-    await recoverUnsentReplies(db, ghl);
+    await recoverUnsentReplies(db, (locationId, contactId, payload) =>
+      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+    );
 
     /* Assert the reply was re-sent */
     const sendCalls = (ghl.sendMessage as ReturnType<typeof vi.fn>).mock.calls;

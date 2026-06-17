@@ -55,7 +55,9 @@ const service = new ConversationService({
 });
 
 /* Recover any unsent replies from previous crash before accepting traffic */
-await recoverUnsentReplies(db, ghl);
+await recoverUnsentReplies(db, (locationId, contactId, payload) =>
+  ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+);
 
 const app = express();
 app.use(express.json());

@@ -6,9 +6,10 @@ import { createRouter } from "./model-router-factory.js";
 import { getFallbackMessage } from "./fallback-messages.js";
 import type { ScmCollected, ScmState } from "./states.js";
 
-interface HistoryMessage {
-  role: "user" | "assistant";
+export interface HistoryMessage {
+  role: "user" | "assistant" | "system";
   content: string;
+  meta?: Record<string, unknown>;
 }
 
 interface GenerateOptions {
@@ -25,8 +26,9 @@ function loadKnowledgeBase(kbPath?: string): string {
   }
 }
 
-function buildSystemPrompt(kb: string): string {
-  return [
+export function buildSystemPrompt(kb: string): string {
+  const kbMode = process.env.KB_MODE ?? "inline";
+  const parts = [
     "You are a senior patient coordinator at a top-tier men's telehealth clinic.",
     "",
     "## Role",
@@ -42,10 +44,13 @@ function buildSystemPrompt(kb: string): string {
     "- No semicolons in SMS/chat/WhatsApp output.",
     "- Keep messages concise and easy to read on a phone.",
     "- If payment has not yet cleared, tell the patient their slot is HELD (e.g. 'held for 30 minutes'). Never say the slot is 'set', 'confirmed', or 'booked' before payment clears. Avoid the words 'confirmed' and 'is set for' entirely in pre-payment messages.",
-    "",
-    "## Knowledge base",
-    kb,
-  ].join("\n");
+  ];
+
+  if (kbMode === "inline") {
+    parts.push("", "## Knowledge base", kb);
+  }
+
+  return parts.join("\n");
 }
 
 function buildStateInstruction(
@@ -135,8 +140,13 @@ function buildStateInstruction(
   return parts.join("\n");
 }
 
-function compactHistory(history: HistoryMessage[]): string[] {
-  return history.map((h) => `${h.role}: ${h.content}`);
+export function compactHistory(history: HistoryMessage[]): string[] {
+  return history.map((h) => {
+    if (h.role === "system" && h.meta?.event) {
+      return `system [${h.meta.event}]: ${h.content}`;
+    }
+    return `${h.role}: ${h.content}`;
+  });
 }
 
 async function callGenerate(

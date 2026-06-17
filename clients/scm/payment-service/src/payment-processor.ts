@@ -6,6 +6,7 @@ import { generate } from "@romea/scm-flow";
 import type { ScmCollected } from "@romea/scm-flow";
 import type { ModelRouter } from "@romea/model-router";
 import { mapIntakeFields } from "@romea/acuity-client";
+import { markMessageProcessed, markMessageSent } from "@romea/bridge-db";
 import Stripe from "stripe";
 
 /* ------------------------------------------------------------------ */
@@ -191,7 +192,20 @@ export async function onPaymentConfirmed(
         "Your appointment is confirmed. If you need to reschedule or have any questions, just let us know.";
     }
 
-    /* 8. Send confirmation via GHL */
+    /* 8. Record processed_messages BEFORE sending (inside tx).
+          sent_at is left NULL so recoverUnsentReplies() can retry
+          if the process crashes before the actual send. */
+    const confirmMessageId = `scm-confirm-${paymentSession.id}`;
+    await markMessageProcessed(client, confirmMessageId, paymentSession.contact_id, {
+      message: replyText,
+      channel: "sms",
+      locationId: ghlLocationId,
+    });
+
+    /* 9. Commit transaction */
+    await client.query("COMMIT");
+
+    /* 10. Send confirmation via GHL (outside tx) */
     let messageSent = false;
     try {
       await ghl.sendMessage(ghlLocationId, paymentSession.contact_id, {
@@ -199,14 +213,13 @@ export async function onPaymentConfirmed(
         channel: "sms",
       });
       messageSent = true;
+      await markMessageSent(db, confirmMessageId);
     } catch (err) {
       console.error("[payment-processor] GHL send failed:", err);
+      /* sent_at stays NULL — recoverUnsentReplies will retry on restart */
     }
 
-    /* 9. Commit transaction */
-    await client.query("COMMIT");
-
-    /* 10. Update GHL opportunity stage and tags (outside transaction) */
+    /* 11. Update GHL opportunity stage and tags (outside transaction) */
     try {
       const opportunities = await ghl.getPipelineOpportunities(
         ghlLocationId,
