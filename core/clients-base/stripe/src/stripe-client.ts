@@ -20,6 +20,7 @@ export interface CheckoutSessionPayload {
   customerEmail?: string;
   clientReferenceId?: string;
   metadata?: Record<string, string>;
+  paymentIntentData?: { receipt_email?: string };
   [key: string]: unknown;
 }
 
@@ -64,6 +65,7 @@ export function createStripeClient(config: StripeClientConfig) {
         customer_email: payload.customerEmail,
         client_reference_id: payload.clientReferenceId,
         metadata: payload.metadata,
+        payment_intent_data: payload.paymentIntentData,
       });
 
       return {

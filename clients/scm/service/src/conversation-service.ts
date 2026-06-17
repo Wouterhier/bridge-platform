@@ -637,6 +637,12 @@ export class ConversationService {
         conversation_id: conversation.id,
         service_key: service.key ?? "",
         slot_iso: slotIso,
+        contact_id: contactId,
+        appointment_type_id: String(service.acuityTypeId),
+        idempotency_key: `checkout-${conversation.id}-${slotIso}`,
+      },
+      paymentIntentData: {
+        receipt_email: collected.email ?? undefined,
       },
     });
 

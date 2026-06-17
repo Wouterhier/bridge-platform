@@ -214,6 +214,26 @@ export function createGhlClient(config: GhlClientConfig) {
       });
     },
 
+    async addContactTags(
+      locationId: string,
+      contactId: string,
+      tags: string[],
+    ): Promise<GhlContact> {
+      return request<GhlContact>("PUT", `/contacts/${contactId}`, { tags }, {
+        location_id: locationId,
+      });
+    },
+
+    async removeContactTags(
+      locationId: string,
+      contactId: string,
+      tags: string[],
+    ): Promise<GhlContact> {
+      return request<GhlContact>("DELETE", `/contacts/${contactId}/tags`, { tags }, {
+        location_id: locationId,
+      });
+    },
+
     async sendMessage(
       locationId: string,
       contactId: string,

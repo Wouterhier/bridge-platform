@@ -1,0 +1,29 @@
+{
+  "name": "@romea/scm-payment-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@romea/scm-flow": "0.0.0",
+    "@romea/model-router": "0.0.0",
+    "@romea/ghl-client": "0.0.0",
+    "@romea/acuity-client": "0.0.0",
+    "@romea/stripe-client": "0.0.0",
+    "@romea/bridge-db": "0.0.0",
+    "express": "^4.21.0",
+    "pg": "^8.13.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
+  }
+}

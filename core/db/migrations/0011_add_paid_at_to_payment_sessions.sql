@@ -1,0 +1,2 @@
+ALTER TABLE payment_sessions
+  ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;

@@ -8,7 +8,8 @@
     "core/clients-base/*",
     "clients/*",
     "clients/scm/flow",
-    "clients/scm/service"
+    "clients/scm/service",
+    "clients/scm/payment-service"
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",

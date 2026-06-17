@@ -13,6 +13,7 @@ export interface PaymentSessionRow {
   idempotency_key: string | null;
   collected_fields: Record<string, unknown>;
   acuity_appointment_id?: string | null;
+  paid_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
