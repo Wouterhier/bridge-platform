@@ -296,6 +296,78 @@ describe("conversation-service", () => {
   });
 
   /* ---------------------------------------------------------------- */
+  /*  Test 1b — Slot menu code-injected into reply                     */
+  /* ---------------------------------------------------------------- */
+  it("code-injects slot menu into reply body so model cannot omit slots", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    const contactId = "test-contact-slot-inject";
+
+    /* Seed conversation at AWAITING_SELECTION with slotMenuFormatted already set */
+    await db.query(
+      `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, 'AWAITING_SELECTION', $3, '{}')`,
+      [
+        "test-loc-001",
+        contactId,
+        JSON.stringify({
+          fullName: "John Smith",
+          phone: "+64210000000",
+          email: "john.smith@example.com",
+          serviceKey: "free_eligibility",
+          slotMenu: [
+            { iso: "2026-06-20T09:00:00+12:00", formatted: "Saturday, 20 June at 9:00 am Pacific/Auckland" },
+            { iso: "2026-06-20T10:00:00+12:00", formatted: "Saturday, 20 June at 10:00 am Pacific/Auckland" },
+          ],
+          slotMenuFormatted: "1. Saturday, 20 June at 9:00 am Pacific/Auckland\n2. Saturday, 20 June at 10:00 am Pacific/Auckland",
+        }),
+      ],
+    );
+
+    /* Send an invalid slot selection — state stays AWAITING_SELECTION */
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: contactId,
+        message: { id: "slot-inject-1", body: "hello", direction: "inbound", type: "SMS" },
+      }),
+    );
+    expect(result.sent).toBe(true);
+
+    /* Assert the reply sent to GHL contains the code-built slot strings */
+    const sendCalls = (ghl.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const slotReplyCall = sendCalls.find(
+      (call: unknown[]) => (call[1] as string) === contactId,
+    );
+    expect(slotReplyCall).toBeTruthy();
+    const replyMessage = (slotReplyCall![2] as { message?: string })?.message ?? "";
+    expect(replyMessage).toContain("Saturday, 20 June at 9:00 am Pacific/Auckland");
+    expect(replyMessage).toContain("Saturday, 20 June at 10:00 am Pacific/Auckland");
+
+    /* Assert conversation state is still AWAITING_SELECTION */
+    const convResult = await db.query(
+      `SELECT current_state FROM conversations WHERE contact_id = $1`,
+      [contactId],
+    );
+    expect(convResult.rows[0].current_state).toBe("AWAITING_SELECTION");
+  });
+
+  /* ---------------------------------------------------------------- */
   /*  Test 2 — Restart resilience                                      */
   /* ---------------------------------------------------------------- */
   it("resumes from Postgres state after simulated restart", async () => {

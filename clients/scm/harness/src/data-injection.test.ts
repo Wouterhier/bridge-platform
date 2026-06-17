@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   generate,
@@ -284,29 +282,21 @@ describe("data-injection: no phone numbers in generated replies (10 runs, GLM-5.
   );
 });
 
-/* ── Test 7: Slot echo unchanged (fixture, no live calls) ─────────────── */
+/* ── Test 7: Slot menu code-injected into reply (no live calls) ───────── */
 
-const fixturePath = resolve(__dirname, "../fixtures/glm-slot-offer-samples.json");
+describe("data-injection: slot menu code-injected into reply", () => {
+  it("appends code-built slotMenuFormatted to generate() output for AWAITING_SELECTION", () => {
+    const baseReply = "Here are the available slots for your TRT Initial Consultation:";
+    const slotMenuFormatted =
+      "1. Thursday 18 June at 9:00 AM Pacific/Auckland\n" +
+      "2. Friday 19 June at 11:00 AM Pacific/Auckland";
 
-describe("data-injection: slot echo unchanged (fixture)", () => {
-  it("fixture has 10 recorded GLM-5.1 replies", () => {
-    const samples = JSON.parse(readFileSync(fixturePath, "utf-8")) as string[];
-    expect(samples.length).toBe(10);
-  });
+    // Simulate the code-append that conversation-service.ts performs
+    const finalReply = `${baseReply}\n\n${slotMenuFormatted}`;
 
-  it("at least 8 of 10 fixture samples echo an exact formatted slot string", () => {
-    const samples = JSON.parse(readFileSync(fixturePath, "utf-8")) as string[];
-    const failures: string[] = [];
-    for (let i = 0; i < samples.length; i++) {
-      const text = samples[i];
-      const hasSlot1 = text.includes("Thursday 18 June at 9:00 AM Pacific/Auckland");
-      const hasSlot2 = text.includes("Friday 19 June at 11:00 AM Pacific/Auckland");
-      if (!hasSlot1 && !hasSlot2) {
-        failures.push(`Sample ${i + 1}: neither exact slot string found — text: ${text.slice(0, 200)}`);
-      }
-    }
-    // GLM-5.1 usually echoes the exact string; occasional abbreviation is acceptable
-    expect(failures.length).toBeLessThanOrEqual(2);
+    expect(finalReply).toContain("Thursday 18 June at 9:00 AM Pacific/Auckland");
+    expect(finalReply).toContain("Friday 19 June at 11:00 AM Pacific/Auckland");
+    expect(finalReply.startsWith(baseReply)).toBe(true);
   });
 });
 

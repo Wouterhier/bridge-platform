@@ -466,6 +466,14 @@ export class ConversationService {
       replyText = getFallbackMessage(nextState);
     }
 
+    /* Append slot menu when in AWAITING_SELECTION — code-built, model-agnostic */
+    if (nextState === "AWAITING_SELECTION") {
+      const slotMenu = collected.slotMenuFormatted as string | undefined;
+      if (slotMenu) {
+        replyText = `${replyText}\n\n${slotMenu}`;
+      }
+    }
+
     /* Append payment link when relevant — strip any model-hallucinated URLs first */
     if (nextState === "AWAITING_PAYMENT" || nextState === "CREATING_CHECKOUT") {
       const paymentLink = collected._paymentLink as string | undefined;
