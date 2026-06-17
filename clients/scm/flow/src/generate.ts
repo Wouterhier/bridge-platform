@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ModelRequest, ModelRouter } from "@romea/model-router";
 import { loadConfig } from "@romea/model-router";
 import { createRouter } from "./model-router-factory.js";
@@ -17,8 +18,10 @@ interface GenerateOptions {
   kbPath?: string;
 }
 
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+
 function loadKnowledgeBase(kbPath?: string): string {
-  const path = kbPath ?? resolve(process.cwd(), "clients/scm/kb/knowledge-base.md");
+  const path = kbPath ?? resolve(__dirname, "../../kb/knowledge-base.md");
   try {
     return readFileSync(path, "utf-8");
   } catch {

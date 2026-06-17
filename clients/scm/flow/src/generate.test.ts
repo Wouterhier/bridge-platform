@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { generate, sanitizeOutput } from "./generate.js";
 import { createRouter } from "./model-router-factory.js";
 import { loadConfig, type ModelRequest } from "@romea/model-router";
 import type { ScmCollected, ScmState } from "./states.js";
+
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 const longTimeout = 30000;
 
@@ -291,7 +294,7 @@ describe("generate() cache billing with full KB", () => {
       });
 
       const kb = readFileSync(
-        resolve(process.cwd(), "clients/scm/kb/knowledge-base.md"),
+        resolve(__dirname, "../../kb/knowledge-base.md"),
         "utf-8",
       );
 
