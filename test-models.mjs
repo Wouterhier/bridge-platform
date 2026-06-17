@@ -30,7 +30,7 @@ async function testModel(model) {
   }
 }
 
-const candidates = ['moon_api/kimi-k2.6', 'zai/glm-5.1'];
+const candidates = ['moon_api/kimi-k2.6', 'dash_intl/glm-5.1'];
 for (const m of candidates) {
   await testModel(m);
 }
