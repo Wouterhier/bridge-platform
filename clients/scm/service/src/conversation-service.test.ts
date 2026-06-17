@@ -784,4 +784,158 @@ describe("conversation-service", () => {
     );
     expect(pmResult.rows[0].sent_at).not.toBeNull();
   });
+
+  /* ---------------------------------------------------------------- */
+  /*  Regression — image/attachment/system/malformed handling         */
+  /* ---------------------------------------------------------------- */
+  it("ignores system event with empty body", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-system",
+        message: { id: "sys-1", body: "", direction: "inbound", type: "SMS" },
+      }),
+    );
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("ignored:system");
+    expect(ghl.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed payload with missing body", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-malformed",
+        message: { id: "mal-1", body: undefined as unknown as string, direction: "inbound", type: "UNKNOWN" },
+      }),
+    );
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("ignored:malformed");
+    expect(ghl.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("escalates image/attachment with empty body to human and sends image-handoff reply", async () => {
+    const ghl = createMockGhlClient();
+    (ghl.getPipelineOpportunities as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "opp-img", pipelineId: "pipe-001", pipelineStageId: "26763fc3-9013-42f6-a3cd-b254bf61f467", contactId: "test-contact-image" },
+    ]);
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-image",
+        message: { id: "img-1", body: "", direction: "inbound", type: "image" },
+      }),
+    );
+    expect(result.sent).toBe(true);
+    expect(result.reason).toBe("escalated:image_attachment");
+
+    /* Assert image-handoff reply was sent */
+    const sendCalls = (ghl.sendMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const imageReplyCall = sendCalls.find((call: unknown[]) =>
+      (call[2] as { message?: string })?.message?.includes("can't view images"),
+    );
+    expect(imageReplyCall).toBeTruthy();
+
+    /* Assert stage updated to HUMAN_TOUCH */
+    const stageCalls = (ghl.updateOpportunityStageSafe as ReturnType<typeof vi.fn>).mock.calls;
+    const humanTouchCall = stageCalls.find(
+      (call: unknown[]) => call[2] === "d1cb71e3-4e11-4b7b-bffc-a6c574a9c5f4",
+    );
+    expect(humanTouchCall).toBeTruthy();
+  });
+
+  it("does not crash on empty body message", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    /* All three variants should return without crashing */
+    const r1 = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-empty-1",
+        message: { id: "empty-1", body: "", direction: "inbound", type: "SMS" },
+      }),
+    );
+    expect(r1.sent).toBe(false);
+
+    const r2 = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-empty-2",
+        message: { id: "empty-2", body: undefined as unknown as string, direction: "inbound", type: "email" },
+      }),
+    );
+    expect(r2.sent).toBe(false);
+
+    const r3 = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-empty-3",
+        message: { id: "empty-3", body: "", direction: "inbound", type: "attachment" },
+      }),
+    );
+    expect(r3.sent).toBe(true); /* image path sends reply */
+  });
 });

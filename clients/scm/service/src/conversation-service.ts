@@ -246,6 +246,23 @@ async function tryExtract(
 export { recoverUnsentReplies } from "@romea/bridge-db";
 
 /* ------------------------------------------------------------------ */
+/*  Inbound message classification                                     */
+/* ------------------------------------------------------------------ */
+
+export type InboundClassification = 'text' | 'image' | 'system' | 'malformed';
+
+export function classifyInbound(message: InboundMessage): InboundClassification {
+  if (!message?.id) return 'malformed';
+  const type = (message.type || '').toLowerCase();
+  if (!message.body || message.body.trim() === '') {
+    if (type.includes('image') || type.includes('attachment') || type.includes('file')) return 'image';
+    if (type.includes('sms') || type.includes('email') || type.includes('live_chat') || type.includes('whatsapp')) return 'system';
+    return 'malformed';
+  }
+  return 'text';
+}
+
+/* ------------------------------------------------------------------ */
 /*  Conversation Service                                               */
 /* ------------------------------------------------------------------ */
 
@@ -268,6 +285,27 @@ export class ConversationService {
       this.deps;
     const { contact_id, location_id, message } = payload;
     const messageId = message.id;
+
+    /* 0. Classify inbound message */
+    const classification = classifyInbound(message);
+    if (classification === 'system' || classification === 'malformed') {
+      return { sent: false, reason: `ignored:${classification}` };
+    }
+    if (classification === 'image') {
+      await ghl.sendMessage(location_id, contact_id, {
+        message: "I can't view images or attachments in this chat. A member of our team will review it and follow up shortly.",
+        channel: mapMessageTypeToChannel(message.type),
+      });
+      const conversation = await findOrCreateConversation(db, location_id, contact_id);
+      await updateConversation(db, conversation.id, conversation.current_state as ScmState, conversation.collected_fields as ScmCollected, {
+        ...conversation.context,
+        escalated: true,
+        escalationReason: 'image_attachment',
+      });
+      await this.updateStage(location_id, contact_id, conversation.current_state as ScmState, conversation.collected_fields as ScmCollected, true);
+      return { sent: true, reason: 'escalated:image_attachment' };
+    }
+
     const rawMessage = message.body;
 
     /* 1. Dedup */
@@ -443,9 +481,24 @@ export class ConversationService {
       return { state: "AWAITING_SELECTION", collected };
     }
 
-    const fetchPromise = acuity.getAvailability(service.acuityTypeId, {
-      calendarID: service.calendarId,
-    });
+    const svc = service as { acuityTypeId: number; calendarId: string | number };
+
+    async function fetchSlots(): Promise<ReturnType<typeof acuity.getAvailability>> {
+      const base = new Date();
+      for (let i = 1; i <= 14; i++) {
+        const d = new Date(base);
+        d.setDate(d.getDate() + i);
+        const dateStr = d.toISOString().split("T")[0];
+        const slots = await acuity.getAvailability(svc.acuityTypeId, {
+          calendarID: svc.calendarId,
+          date: dateStr,
+        });
+        if (slots.length > 0) return slots;
+      }
+      return [];
+    }
+
+    const fetchPromise = fetchSlots();
 
     const alreadySent =
       (conversation.context as Record<string, unknown>)?.holdingMessageSent ===

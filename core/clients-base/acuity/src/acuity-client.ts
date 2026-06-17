@@ -10,6 +10,10 @@ export interface AcuityClientConfig {
   apiKey: string;
   baseUrl?: string;
   db?: Db;
+  logger?: {
+    warn: (msg: string, meta?: Record<string, unknown>) => void;
+    error: (msg: string, meta?: Record<string, unknown>) => void;
+  };
 }
 
 export interface AcuityAppointmentType {
@@ -69,6 +73,8 @@ export interface AcuityAvailabilityParams {
 }
 
 const DEFAULT_BASE_URL = "https://acuityscheduling.com/api/v1";
+const MAX_RETRIES = 3;
+const RETRY_DELAYS_MS = [500, 1500, 4000]; // exponential-ish backoff
 
 export function createAcuityClient(config: AcuityClientConfig) {
   const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
@@ -76,6 +82,7 @@ export function createAcuityClient(config: AcuityClientConfig) {
     "base64",
   );
   const db = config.db;
+  const logger = config.logger;
   const inFlight = new Map<string, Promise<AcuityAppointment>>();
 
   if (!config.userId || !config.apiKey) {
@@ -90,59 +97,134 @@ export function createAcuityClient(config: AcuityClientConfig) {
     };
   }
 
-  async function request<T>(
+  function isHtmlResponse(response: Response, text: string): boolean {
+    const ct = response.headers.get("content-type") ?? "";
+    if (ct.toLowerCase().includes("text/html")) return true;
+    if (text.trim().toLowerCase().startsWith("<!doctype html")) return true;
+    if (text.trim().toLowerCase().startsWith("<html")) return true;
+    return false;
+  }
+
+  async function requestWithRetry<T>(
     method: string,
     path: string,
     body?: unknown,
     query?: Record<string, string | number | boolean | undefined>,
+    options: { allowEmptyOnHtml?: boolean } = {},
   ): Promise<T> {
-    const url = new URL(path, baseUrl);
+    const url = new URL(path.replace(/^\//, ""), baseUrl + "/");
     if (query) {
       for (const [key, value] of Object.entries(query)) {
         if (value !== undefined) url.searchParams.set(key, String(value));
       }
     }
 
-    const init: RequestInit = {
-      method,
-      headers: headers(),
-    };
-    if (body !== undefined) {
-      init.body = JSON.stringify(body);
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const init: RequestInit = {
+        method,
+        headers: headers(),
+      };
+      if (body !== undefined) {
+        init.body = JSON.stringify(body);
+      }
+
+      try {
+        const response = await fetch(url.toString(), init);
+        const text = await response.text();
+
+        // HTML detection
+        if (isHtmlResponse(response, text)) {
+          logger?.warn("Acuity returned HTML response", {
+            url: url.toString(),
+            status: response.status,
+            attempt: attempt + 1,
+            preview: text.slice(0, 200),
+          });
+          if (options.allowEmptyOnHtml) {
+            return [] as unknown as T;
+          }
+          lastError = new AcuityApiError(
+            `Acuity returned HTML (status ${response.status})`,
+            response.status,
+            { raw: text.slice(0, 500) },
+          );
+          // Retry on HTML
+          if (attempt < MAX_RETRIES - 1) {
+            await sleep(RETRY_DELAYS_MS[attempt] ?? 4000);
+            continue;
+          }
+          throw lastError;
+        }
+
+        let data: unknown;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = { raw: text };
+        }
+
+        if (!response.ok) {
+          throw new AcuityApiError(
+            `Acuity API error: ${response.status} ${response.statusText}`,
+            response.status,
+            data,
+          );
+        }
+        return data as T;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        // Only retry on network errors or 5xx (not 4xx client errors)
+        const isNetworkError = !(err instanceof AcuityApiError);
+        const isServerError = err instanceof AcuityApiError && err.status >= 500;
+        const isHtmlError = err instanceof AcuityApiError && err.message.includes("HTML");
+        if ((isNetworkError || isServerError || isHtmlError) && attempt < MAX_RETRIES - 1) {
+          await sleep(RETRY_DELAYS_MS[attempt] ?? 4000);
+          continue;
+        }
+        throw lastError;
+      }
     }
 
-    const response = await fetch(url.toString(), init);
-    const text = await response.text();
-    let data: unknown;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { raw: text };
-    }
-
-    if (!response.ok) {
-      throw new AcuityApiError(
-        `Acuity API error: ${response.status} ${response.statusText}`,
-        response.status,
-        data,
-      );
-    }
-    return data as T;
+    throw lastError ?? new Error("Acuity request failed after retries");
   }
 
   return {
     async getAppointmentTypes(): Promise<AcuityAppointmentType[]> {
-      return request<AcuityAppointmentType[]>("GET", "/appointment-types");
+      return requestWithRetry<AcuityAppointmentType[]>("GET", "/appointment-types");
     },
 
     async getAvailability(
       appointmentTypeId: number,
       params: AcuityAvailabilityParams = {},
     ): Promise<AcuityAvailabilitySlot[]> {
-      return request<AcuityAvailabilitySlot[]>("GET", "/availability/times", undefined, {
-        appointmentTypeID: appointmentTypeId,
-        ...params,
-      });
+      try {
+        return await requestWithRetry<AcuityAvailabilitySlot[]>(
+          "GET",
+          "/availability/times",
+          undefined,
+          {
+            appointmentTypeID: appointmentTypeId,
+            ...params,
+          },
+        );
+      } catch (err) {
+        // If we got HTML or unparseable after retries, return empty slots
+        // so the state machine can re-prompt.
+        if (
+          err instanceof AcuityApiError &&
+          (err.message.includes("HTML") || err.status >= 500)
+        ) {
+          logger?.warn("getAvailability returning empty after HTML/error", {
+            appointmentTypeId,
+            params,
+            error: err.message,
+          });
+          return [];
+        }
+        throw err;
+      }
     },
 
     async createAppointment(
@@ -180,7 +262,7 @@ export function createAcuityClient(config: AcuityClientConfig) {
             return getAppointment(appointmentId);
           }
 
-          const appointment = await request<AcuityAppointment>(
+          const appointment = await requestWithRetry<AcuityAppointment>(
             "POST",
             "/appointments",
             acuityPayload,
@@ -213,24 +295,28 @@ export function createAcuityClient(config: AcuityClientConfig) {
         }
       }
 
-      return request<AcuityAppointment>("POST", "/appointments", acuityPayload);
+      return requestWithRetry<AcuityAppointment>("POST", "/appointments", acuityPayload);
     },
 
     async getAppointment(id: number): Promise<AcuityAppointment> {
-      return getAppointment(id);
+      return requestWithRetry<AcuityAppointment>("GET", `/appointments/${id}`);
     },
 
     async updateAppointmentFormFields(
       id: number,
       fields: AcuityFormField[],
     ): Promise<AcuityAppointment> {
-      return request<AcuityAppointment>("PUT", `/appointments/${id}`, { fields });
+      return requestWithRetry<AcuityAppointment>("PUT", `/appointments/${id}`, { fields });
     },
   };
 
   async function getAppointment(id: number): Promise<AcuityAppointment> {
-    return request<AcuityAppointment>("GET", `/appointments/${id}`);
+    return requestWithRetry<AcuityAppointment>("GET", `/appointments/${id}`);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class AcuityApiError extends Error {

@@ -24,7 +24,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "TRT Initial Consultation",
     duration: 30,
     price: 179,
-    calendarId: "7iQocxTR6z7vykgWNPyw",
+    calendarId: 13780963,
     paid: true,
   },
   trt_followup: {

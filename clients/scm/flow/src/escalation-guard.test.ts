@@ -52,4 +52,10 @@ describe("shouldEscalate", () => {
       escalate: false,
     });
   });
+
+  it("returns false for undefined or empty message", () => {
+    expect(shouldEscalate(undefined)).toEqual({ escalate: false });
+    expect(shouldEscalate("")).toEqual({ escalate: false });
+    expect(shouldEscalate("   ")).toEqual({ escalate: false });
+  });
 });

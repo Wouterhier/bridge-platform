@@ -128,7 +128,9 @@ export async function onPaymentConfirmed(
         (collected.email as string) ?? session.customer_email ?? "",
       phone: collected.phone as string | undefined,
       fields: mapIntakeFields(
-        (collected.serviceKey as string) ?? "",
+        typeof collected.serviceKey === "string"
+          ? collected.serviceKey
+          : (collected.serviceKey as { key?: string } | undefined)?.key ?? "",
         {
           firstName,
           lastName,

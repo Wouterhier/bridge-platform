@@ -147,6 +147,52 @@ describe("acuity-client", () => {
     expect(result).toEqual(appointment);
   });
 
+  it("retries on HTML response and returns empty array for availability", async () => {
+    const client = createAcuityClient({ userId, apiKey });
+    let callCount = 0;
+    mockFetch((input) => {
+      const url = getUrl(input);
+      expect(url).toContain("/availability/times");
+      callCount++;
+      if (callCount < 3) {
+        return new Response(
+          "<!DOCTYPE html><html><body>Gateway Error</body></html>",
+          {
+            status: 502,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          },
+        );
+      }
+      return new Response(JSON.stringify([{ time: "2026-06-20T10:00:00" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const result = await client.getAvailability(79429909, { date: "2026-06-20" });
+    expect(callCount).toBe(3);
+    expect(result).toEqual([{ time: "2026-06-20T10:00:00" }]);
+  });
+
+  it("returns empty array for availability when HTML persists after retries", async () => {
+    const client = createAcuityClient({ userId, apiKey });
+    let callCount = 0;
+    mockFetch((input) => {
+      const url = getUrl(input);
+      expect(url).toContain("/availability/times");
+      callCount++;
+      return new Response(
+        "<!DOCTYPE html><html><body>Maintenance</body></html>",
+        {
+          status: 503,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        },
+      );
+    });
+    const result = await client.getAvailability(79429909, { date: "2026-06-20" });
+    expect(callCount).toBe(3);
+    expect(result).toEqual([]);
+  });
+
   it("prevents double-book race via in-flight deduplication", async () => {
     const rows: Array<Partial<import("@romea/bridge-db").PaymentSessionRow>> = [
       {

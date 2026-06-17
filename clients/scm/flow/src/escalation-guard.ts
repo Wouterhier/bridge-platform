@@ -15,9 +15,12 @@ export interface EscalationResult {
 }
 
 export function shouldEscalate(
-  message: string,
+  message: string | undefined,
   serviceKey?: string,
 ): EscalationResult {
+  if (!message || message.trim() === '') {
+    return { escalate: false };
+  }
   const lower = message.toLowerCase();
 
   for (const pattern of EMERGENCY_PATTERNS) {

@@ -31,7 +31,7 @@ function buildServiceList(): string {
 
 function buildNamePrompt(rawMessage: string, history: HistoryMessage[]): string {
   return [
-    "Extract the patient's name from their message.",
+    "Extract the patient's full name from their message.",
     "Return ONLY a JSON object in one of these forms:",
     '{"firstName": "...", "lastName": "..."}',
     'or {"fullName": "..."}',
@@ -163,6 +163,125 @@ async function callExtract(
   }
 }
 
+// ── Regex fallback extractors ───────────────────────────────────────────────
+
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+const PHONE_RE = /(?:\+\d{1,3}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}/;
+const NAME_RE = /(?:my name is|i am|i'm)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i;
+
+function regexExtractEmail(raw: string): string | null {
+  const m = raw.match(EMAIL_RE);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function regexExtractPhone(raw: string): string | null {
+  const m = raw.match(PHONE_RE);
+  if (!m) return null;
+  const digits = m[0].replace(/\D/g, "");
+  if (digits.length < 8) return null;
+  return m[0];
+}
+
+function regexExtractName(raw: string): { firstName: string; lastName: string } | { fullName: string } | null {
+  const m = raw.match(NAME_RE);
+  if (m) {
+    const parts = m[1].trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+    }
+  }
+  // Fallback: look for two capitalized words
+  const fm = raw.match(/([A-Z][a-z]+)\s+([A-Z][a-z]+)/);
+  if (fm) {
+    return { firstName: fm[1], lastName: fm[2] };
+  }
+  return null;
+}
+
+// ── Service key fuzzy resolver ──────────────────────────────────────────────
+
+export function resolveServiceKey(raw: string): string | null {
+  const input = raw.trim().toLowerCase();
+  if (!input) return null;
+
+  // 1. Direct key match
+  if (services[input]) return input;
+
+  // 2. Explicit rejections
+  if (input === "vasectomy" || input.includes("vasectom")) return null;
+
+  // 3. Free eligibility
+  if (input.includes("free eligibility") || input.includes("eligibility check") || input === "eligibility") {
+    return "free_eligibility";
+  }
+
+  // 4. TRT
+  const isTrt = input.includes("trt") || input.includes("testosterone");
+  if (isTrt) {
+    if (input.includes("initial") || input.includes("first") || input.includes("consult")) return "trt_initial";
+    if (input.includes("follow") || input.includes("follow-up")) return "trt_followup";
+    if (input.includes("on treatment") || input.includes("ongoing") || input.includes("on-treatment")) return "trt_ontreatment";
+    if (input.includes("express")) return "trt_express";
+    // Default TRT → initial
+    return "trt_initial";
+  }
+
+  // 5. ED / Erectile
+  const isEd = input.includes("ed") || input.includes("erectile");
+  if (isEd) {
+    if (input.includes("initial") || input.includes("first") || input.includes("consult")) return "ed_initial";
+    return "ed_initial";
+  }
+
+  // 6. GLP-1 / Semaglutide
+  const isGlp = input.includes("glp") || input.includes("glp-1") || input.includes("semaglutide");
+  if (isGlp) {
+    if (input.includes("initial") || input.includes("first") || input.includes("consult")) return "glp1_initial";
+    if (input.includes("follow")) return "glp1_followup";
+    return "glp1_initial";
+  }
+
+  // 7. RoidCare / SARM / PED / Steroid
+  const isRoid = input.includes("roid") || input.includes("sarm") || input.includes("ped") || input.includes("steroid");
+  if (isRoid) {
+    if (input.includes("initial") || input.includes("first") || input.includes("consult")) return "roidcare_initial";
+    if (input.includes("follow")) return "roidcare_followup";
+    return "roidcare_initial";
+  }
+
+  // 8. Nutrition
+  const isNutrition = input.includes("nutrition");
+  if (isNutrition) {
+    if (input.includes("initial") || input.includes("first") || input.includes("consult")) return "nutrition_initial";
+    if (input.includes("follow")) return "nutrition_followup";
+    return "nutrition_initial";
+  }
+
+  // 9. Weight management
+  const isWeight = input.includes("weight") || input.includes("weight management");
+  if (isWeight) {
+    if (input.includes("initial") || input.includes("first") || input.includes("consult")) return "weightmgmt_initial";
+    if (input.includes("follow")) return "weightmgmt_followup";
+    return "weightmgmt_initial";
+  }
+
+  // 10. Fuzzy name match against service names
+  for (const svc of Object.values(services)) {
+    const svcName = svc.name.toLowerCase();
+    // Direct substring match in either direction
+    if (svcName.includes(input) || input.includes(svcName)) return svc.key;
+    // Word-level overlap
+    const inputWords = new Set(input.split(/\s+/));
+    const svcWords = svcName.split(/\s+/);
+    const overlap = svcWords.filter((w) => inputWords.has(w)).length;
+    if (overlap >= 2) return svc.key;
+  }
+
+  return null;
+}
+
+// ── Main extraction function ────────────────────────────────────────────────
+
 export async function extract(
   state: ScmState,
   rawMessage: string,
@@ -186,17 +305,48 @@ export async function extract(
   };
 
   const res = await callExtract(router, req);
-  const parsed = parseJson(res.text);
+  let parsed = parseJson(res.text);
 
   if (parsed === null || isEmptyResult(parsed)) {
     // Escalate to stronger model for ambiguous/null extraction.
     const escalation = await router.escalate("extract", req);
     const escalatedParsed = parseJson(escalation.text);
     if (escalatedParsed === null || isEmptyResult(escalatedParsed)) {
-      return null;
+      parsed = null;
+    } else {
+      parsed = escalatedParsed;
     }
-    return escalatedParsed as ExtractionHint;
   }
 
-  return parsed as ExtractionHint;
+  const hint = (parsed ?? {}) as ExtractionHint;
+
+  // ── Post-processing: regex fallbacks ────────────────────────────────────
+  if (state === "COLLECTING_EMAIL" && !hint.email) {
+    const fallback = regexExtractEmail(rawMessage);
+    if (fallback) hint.email = fallback;
+  }
+  if (state === "COLLECTING_PHONE" && !hint.phone) {
+    const fallback = regexExtractPhone(rawMessage);
+    if (fallback) hint.phone = fallback;
+  }
+  if (state === "COLLECTING_NAME" && !hint.firstName && !hint.fullName) {
+    const fallback = regexExtractName(rawMessage);
+    if (fallback) Object.assign(hint, fallback);
+  }
+
+  // ── Post-processing: service key resolution ─────────────────────────────
+  if (state === "SELECTING_SERVICE" && hint.serviceKey) {
+    const resolved = resolveServiceKey(hint.serviceKey);
+    if (resolved) {
+      hint.serviceKey = resolved;
+    } else {
+      // If resolveServiceKey returns null, clear it so the engine re-prompts.
+      delete hint.serviceKey;
+    }
+  }
+
+  // If nothing was extracted at all, return null.
+  if (isEmptyResult(hint)) return null;
+
+  return hint;
 }
