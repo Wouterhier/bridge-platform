@@ -144,11 +144,13 @@ const paymentNudgeCollected: ScmCollected = {
 function assertHeldLanguage(text: string): string[] {
   const issues: string[] = [];
   const lower = text.toLowerCase();
-  if (!lower.includes("held")) {
-    issues.push("missing 'held'");
+  if (!lower.includes("held") && !lower.includes("on hold")) {
+    issues.push("missing 'held' or 'on hold'");
   }
-  if (lower.includes("confirmed") || lower.includes("is set for") || lower.includes("is set")) {
-    issues.push("uses pre-payment confirmed/set language");
+  const forbidden = ["confirmed", "booked", "scheduled", "set for", "finalised", "finalized"];
+  const found = forbidden.filter((w) => lower.includes(w));
+  if (found.length > 0) {
+    issues.push(`uses pre-payment forbidden language: ${found.join(", ")}`);
   }
   return issues;
 }

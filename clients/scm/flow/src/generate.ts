@@ -26,10 +26,21 @@ function loadKnowledgeBase(kbPath?: string): string {
   }
 }
 
-export function buildSystemPrompt(kb: string): string {
+export function buildSystemPrompt(kb: string, state?: ScmState): string {
   const kbMode = process.env.KB_MODE ?? "inline";
   const parts = [
     "You are a senior patient coordinator at a top-tier men's telehealth clinic.",
+    "",
+    "## Style rules — follow exactly:",
+    "- Never use em dashes (—). Use a period or a spaced hyphen instead.",
+    "- Never open with \"Hey\" or \"Hey there\".",
+    "- No exclamation points in the opening line.",
+    "- No semicolons in SMS/chat/WhatsApp; split into two sentences.",
+    "- Register: calm, precise, warm patient coordinator at a top-tier clinic. Never salesy.",
+    "",
+    "## Payment-state language:",
+    "- If the patient has NOT yet paid, the slot is HELD (e.g. \"held for 30 minutes\", \"on hold\"). Do NOT say the appointment is set, scheduled, confirmed, or booked.",
+    "- Only after Stripe payment clears may you use confirmed/booked/scheduled language.",
     "",
     "## Role",
     "- Guide the patient through booking a consultation.",
@@ -45,6 +56,13 @@ export function buildSystemPrompt(kb: string): string {
     "- Keep messages concise and easy to read on a phone.",
     "- If payment has not yet cleared, tell the patient their slot is HELD (e.g. 'held for 30 minutes'). Never say the slot is 'set', 'confirmed', or 'booked' before payment clears. Avoid the words 'confirmed' and 'is set for' entirely in pre-payment messages.",
   ];
+
+  if (state === "AWAITING_PAYMENT" || state === "CREATING_CHECKOUT") {
+    parts.push("", "Reminder: payment has not cleared. Use 'held' language only.");
+  }
+  if (state === "CONFIRMED" || state === "BOOKING_ACUITY") {
+    parts.push("", "Payment has cleared. Confirm the appointment normally.");
+  }
 
   if (kbMode === "inline") {
     parts.push("", "## Knowledge base", kb);
@@ -110,12 +128,12 @@ function buildStateInstruction(
       break;
     case "CREATING_CHECKOUT":
       parts.push(
-        "Tell the patient you are preparing a secure payment link for their appointment. Remind them their slot is held while payment is pending. Do not say the appointment is confirmed, set, or booked.",
+        "Tell the patient you are preparing a secure payment link for their appointment. Remind them their slot is held while payment is pending.",
       );
       break;
     case "AWAITING_PAYMENT":
       parts.push(
-        "The payment is pending. Share the payment link and remind the patient their slot is held. Do not say the appointment is confirmed, set, or booked.",
+        "The payment is pending. Share the payment link and remind the patient their slot is held.",
       );
       break;
     case "BOOKING_ACUITY":
@@ -160,14 +178,24 @@ function sanitizeOutput(text: string, state?: ScmState): string {
       .replace(/;/g, ".")
   );
 
-  /* Only strip pre-payment 'confirmed' / 'set' language in pre-payment states */
+  /* Only strip pre-payment 'confirmed' / 'booked' / 'scheduled' / 'set' language in pre-payment states */
   if (state === "AWAITING_PAYMENT" || state === "CREATING_CHECKOUT") {
     sanitized = sanitized
-      .replace(/\bwill be confirmed\b/gi, "will be finalised")
-      .replace(/\bis confirmed\b/gi, "is finalised")
-      .replace(/\bconfirmed\b/gi, "finalised")
-      .replace(/\bis set for\b/gi, "is scheduled for")
-      .replace(/\bis set\b/gi, "is arranged");
+      .replace(/\bwill be confirmed\b/gi, "will be held")
+      .replace(/\bis confirmed\b/gi, "is held")
+      .replace(/\bconfirmed\b/gi, "held")
+      .replace(/\bwill be booked\b/gi, "will be held")
+      .replace(/\bis booked\b/gi, "is held")
+      .replace(/\bbooked\b/gi, "held")
+      .replace(/\bwill be scheduled\b/gi, "will be held")
+      .replace(/\bis scheduled\b/gi, "is held")
+      .replace(/\bscheduled\b/gi, "held")
+      .replace(/\bis set for\b/gi, "is held for")
+      .replace(/\bis set\b/gi, "is held")
+      .replace(/\bset for\b/gi, "held for")
+      .replace(/\bset\b/gi, "held")
+      .replace(/\bfinalised\b/gi, "held")
+      .replace(/\bfinalized\b/gi, "held");
   }
 
   return sanitized;
@@ -203,7 +231,7 @@ export async function generate(
   options: GenerateOptions = {},
 ): Promise<string> {
   const kb = loadKnowledgeBase(options.kbPath);
-  const system = buildSystemPrompt(kb);
+  const system = buildSystemPrompt(kb, state);
   const stateInstruction = buildStateInstruction(state, collected, errorKey);
 
   const messages: HistoryMessage[] = [
