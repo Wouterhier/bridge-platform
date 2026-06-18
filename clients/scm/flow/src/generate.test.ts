@@ -215,7 +215,12 @@ describe("sanitizeOutput() warning behavior", () => {
     const text = "Your slot will be confirmed once payment clears.";
     sanitizeOutput(text, "AWAITING_PAYMENT");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[generate] Pre-payment message contains commitment word "confirmed"'),
+      JSON.stringify({
+        action: "injector.commitmentWord",
+        detected: "confirmed",
+        context: text.slice(0, 80),
+        shadow: false,
+      }),
     );
     warnSpy.mockRestore();
   });
@@ -225,7 +230,12 @@ describe("sanitizeOutput() warning behavior", () => {
     const text = "Your appointment is booked for tomorrow.";
     sanitizeOutput(text, "CREATING_CHECKOUT");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[generate] Pre-payment message contains commitment word "booked"'),
+      JSON.stringify({
+        action: "injector.commitmentWord",
+        detected: "booked",
+        context: text.slice(0, 80),
+        shadow: false,
+      }),
     );
     warnSpy.mockRestore();
   });
