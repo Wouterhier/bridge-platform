@@ -3,9 +3,9 @@ import { resolve } from "node:path";
 import express from "express";
 import { Pool } from "pg";
 import { ConversationService, recoverUnsentReplies, parseInbound } from "./conversation-service.js";
-import { createGhlClient } from "@romea/ghl-client";
-import { createAcuityClient } from "@romea/acuity-client";
-import { createStripeClient } from "@romea/stripe-client";
+import { createGhlClient, createShadowGhlClient } from "@romea/ghl-client";
+import { createAcuityClient, createShadowAcuityClient } from "@romea/acuity-client";
+import { createStripeClient, createShadowStripeClient } from "@romea/stripe-client";
 import { loadConfig } from "@romea/model-router";
 import { createRouter } from "@romea/scm-flow";
 
@@ -32,15 +32,28 @@ if (!DATABASE_URL) {
 
 const db = new Pool({ connectionString: DATABASE_URL });
 
-const ghl = createGhlClient({ token: process.env.GHL_PIT ?? "" });
-const acuity = createAcuityClient({
-  userId: process.env.ACUITY_USER_ID ?? "",
-  apiKey: process.env.ACUITY_API_KEY ?? "",
-  db,
-});
-const stripe = createStripeClient({
-  secretKey: process.env.STRIPE_SECRET_KEY ?? "",
-});
+const isShadow = process.env.SHADOW_MODE === "true";
+if (isShadow) {
+  console.log("[selfcaremen-conversation] Starting in SHADOW MODE - all writes suppressed");
+}
+
+const ghl = isShadow
+  ? createShadowGhlClient({ token: process.env.GHL_PIT ?? "" })
+  : createGhlClient({ token: process.env.GHL_PIT ?? "" });
+const acuity = isShadow
+  ? createShadowAcuityClient({
+      userId: process.env.ACUITY_USER_ID ?? "",
+      apiKey: process.env.ACUITY_API_KEY ?? "",
+      db,
+    })
+  : createAcuityClient({
+      userId: process.env.ACUITY_USER_ID ?? "",
+      apiKey: process.env.ACUITY_API_KEY ?? "",
+      db,
+    });
+const stripe = isShadow
+  ? createShadowStripeClient({ secretKey: process.env.STRIPE_SECRET_KEY ?? "" })
+  : createStripeClient({ secretKey: process.env.STRIPE_SECRET_KEY ?? "" });
 
 const router = createRouter(loadConfig({ dotenvPaths: [resolve(process.cwd(), "clients/scm/.env")] }));
 

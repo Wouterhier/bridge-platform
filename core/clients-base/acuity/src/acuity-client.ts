@@ -77,10 +77,6 @@ const DEFAULT_BASE_URL = "https://acuityscheduling.com/api/v1";
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1500, 4000]; // exponential-ish backoff
 
-function isShadowMode(): boolean {
-  return process.env.SHADOW_MODE === "true";
-}
-
 export function createAcuityClient(config: AcuityClientConfig) {
   const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const auth = Buffer.from(`${config.userId}:${config.apiKey}`).toString(
@@ -92,15 +88,6 @@ export function createAcuityClient(config: AcuityClientConfig) {
 
   if (!config.userId || !config.apiKey) {
     throw new Error("ACUITY_USER_ID and ACUITY_API_KEY are required");
-  }
-
-  function shadowLog(action: string, params: Record<string, unknown>) {
-    const entry = { shadow: true, action, ...params };
-    if (logger) {
-      logger.info("SHADOW: would have " + action, entry);
-    } else {
-      console.log(JSON.stringify(entry));
-    }
   }
 
   function headers(): Record<string, string> {
@@ -250,15 +237,6 @@ export function createAcuityClient(config: AcuityClientConfig) {
         ...acuityPayload
       } = payload;
 
-      if (isShadowMode()) {
-        shadowLog("acuity.createAppointment", { idempotencyKey, ...acuityPayload });
-        return {
-          id: 999999,
-          type: String(acuityPayload.appointmentTypeID),
-          ...acuityPayload,
-        } as AcuityAppointment;
-      }
-
       if (idempotencyKey) {
         if (!db) {
           throw new Error(
@@ -329,10 +307,6 @@ export function createAcuityClient(config: AcuityClientConfig) {
       id: number,
       fields: AcuityFormField[],
     ): Promise<AcuityAppointment> {
-      if (isShadowMode()) {
-        shadowLog("acuity.updateAppointmentFormFields", { id, fields });
-        return { id, fields } as AcuityAppointment;
-      }
       return requestWithRetry<AcuityAppointment>("PUT", `/appointments/${id}`, { fields });
     },
   };
@@ -340,6 +314,67 @@ export function createAcuityClient(config: AcuityClientConfig) {
   async function getAppointment(id: number): Promise<AcuityAppointment> {
     return requestWithRetry<AcuityAppointment>("GET", `/appointments/${id}`);
   }
+}
+
+export function createShadowAcuityClient(config: AcuityClientConfig) {
+  const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
+  const db = config.db;
+  const logger = config.logger;
+
+  if (!config.userId || !config.apiKey) {
+    throw new Error("ACUITY_USER_ID and ACUITY_API_KEY are required");
+  }
+
+  function shadowLog(action: string, params: Record<string, unknown>) {
+    const entry = { shadow: true, action, ...params };
+    if (logger) {
+      logger.info("SHADOW: would have " + action, entry);
+    } else {
+      console.log(JSON.stringify(entry));
+    }
+  }
+
+  return {
+    async getAppointmentTypes(): Promise<AcuityAppointmentType[]> {
+      return [];
+    },
+
+    async getAvailability(
+      appointmentTypeId: number,
+      params: AcuityAvailabilityParams = {},
+    ): Promise<AcuityAvailabilitySlot[]> {
+      return [];
+    },
+
+    async createAppointment(
+      payload: AcuityCreateAppointmentPayload,
+    ): Promise<AcuityAppointment> {
+      const {
+        idempotencyKey,
+        paymentSessionId,
+        ...acuityPayload
+      } = payload;
+
+      shadowLog("acuity.createAppointment", { idempotencyKey, ...acuityPayload });
+      return {
+        id: 999999,
+        type: String(acuityPayload.appointmentTypeID),
+        ...acuityPayload,
+      } as AcuityAppointment;
+    },
+
+    async getAppointment(id: number): Promise<AcuityAppointment> {
+      return { id } as AcuityAppointment;
+    },
+
+    async updateAppointmentFormFields(
+      id: number,
+      fields: AcuityFormField[],
+    ): Promise<AcuityAppointment> {
+      shadowLog("acuity.updateAppointmentFormFields", { id, fields });
+      return { id, fields } as AcuityAppointment;
+    },
+  };
 }
 
 function sleep(ms: number): Promise<void> {

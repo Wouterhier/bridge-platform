@@ -36,24 +36,10 @@ export interface CheckoutSessionResult {
   [key: string]: unknown;
 }
 
-function isShadowMode(): boolean {
-  return process.env.SHADOW_MODE === "true";
-}
-
 export function createStripeClient(config: StripeClientConfig) {
   const stripe = new Stripe(config.secretKey, {
     apiVersion: config.apiVersion ?? "2025-02-24.acacia",
   });
-  const logger = config.logger;
-
-  function shadowLog(action: string, params: Record<string, unknown>) {
-    const entry = { shadow: true, action, ...params };
-    if (logger) {
-      logger.info("SHADOW: would have " + action, entry);
-    } else {
-      console.log(JSON.stringify(entry));
-    }
-  }
 
   return {
     stripe,
@@ -61,19 +47,6 @@ export function createStripeClient(config: StripeClientConfig) {
     async createCheckoutSession(
       payload: CheckoutSessionPayload,
     ): Promise<CheckoutSessionResult> {
-      if (isShadowMode()) {
-        shadowLog("stripe.createCheckoutSession", {
-          lineItems: payload.lineItems,
-          customerEmail: payload.customerEmail,
-          clientReferenceId: payload.clientReferenceId,
-          metadata: payload.metadata,
-        });
-        return {
-          id: "shadow-session-id",
-          url: "https://shadow.example.com/checkout",
-          status: "open",
-        };
-      }
       const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
         payload.lineItems.map((item) => {
           if (item.price) {
@@ -104,6 +77,63 @@ export function createStripeClient(config: StripeClientConfig) {
         id: session.id,
         url: session.url,
         status: session.status,
+      };
+    },
+
+    async getCheckoutSession(sessionId: string): Promise<Stripe.Checkout.Session> {
+      return stripe.checkout.sessions.retrieve(sessionId);
+    },
+
+    async listLineItems(
+      sessionId: string,
+      params?: Stripe.Checkout.SessionListLineItemsParams,
+    ): Promise<Stripe.ApiList<Stripe.LineItem>> {
+      return stripe.checkout.sessions.listLineItems(sessionId, params);
+    },
+
+    constructWebhookEvent(
+      payload: string | Buffer,
+      signature: string,
+      secret: string,
+    ): Stripe.Event {
+      return stripe.webhooks.constructEvent(payload, signature, secret);
+    },
+  };
+}
+
+export function createShadowStripeClient(config: StripeClientConfig) {
+  // We still instantiate Stripe so that constructWebhookEvent and other
+  // read-only methods work, but write operations are stubbed.
+  const stripe = new Stripe(config.secretKey, {
+    apiVersion: config.apiVersion ?? "2025-02-24.acacia",
+  });
+  const logger = config.logger;
+
+  function shadowLog(action: string, params: Record<string, unknown>) {
+    const entry = { shadow: true, action, ...params };
+    if (logger) {
+      logger.info("SHADOW: would have " + action, entry);
+    } else {
+      console.log(JSON.stringify(entry));
+    }
+  }
+
+  return {
+    stripe,
+
+    async createCheckoutSession(
+      payload: CheckoutSessionPayload,
+    ): Promise<CheckoutSessionResult> {
+      shadowLog("stripe.createCheckoutSession", {
+        lineItems: payload.lineItems,
+        customerEmail: payload.customerEmail,
+        clientReferenceId: payload.clientReferenceId,
+        metadata: payload.metadata,
+      });
+      return {
+        id: "shadow-session-id",
+        url: "https://shadow.example.com/checkout",
+        status: "open",
       };
     },
 

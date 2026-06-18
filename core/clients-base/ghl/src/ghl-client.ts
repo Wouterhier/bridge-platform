@@ -112,19 +112,6 @@ export function createGhlClient(config: GhlClientConfig) {
     };
   }
 
-  function isShadowMode(): boolean {
-    return process.env.SHADOW_MODE === "true";
-  }
-
-  function shadowLog(action: string, params: Record<string, unknown>) {
-    const entry = { shadow: true, action, ...params };
-    if (config.logger) {
-      config.logger.info("SHADOW: would have " + action, entry);
-    } else {
-      console.log(JSON.stringify(entry));
-    }
-  }
-
   async function request<T>(
     method: string,
     path: string,
@@ -209,10 +196,6 @@ export function createGhlClient(config: GhlClientConfig) {
       locationId: string,
       payload: GhlContactPayload,
     ): Promise<GhlContact> {
-      if (isShadowMode()) {
-        shadowLog("ghl.createContact", { locationId, payload });
-        return { id: "shadow-contact-id", locationId, ...payload } as GhlContact;
-      }
       const search = await this.searchContacts(locationId, {
         email: payload.email,
         phone: payload.phone,
@@ -231,10 +214,6 @@ export function createGhlClient(config: GhlClientConfig) {
       contactId: string,
       payload: GhlContactPayload,
     ): Promise<GhlContact> {
-      if (isShadowMode()) {
-        shadowLog("ghl.updateContact", { locationId, contactId, payload });
-        return { id: contactId, locationId, ...payload } as GhlContact;
-      }
       return request<GhlContact>("PUT", `/contacts/${contactId}`, payload, {
         location_id: locationId,
       });
@@ -245,10 +224,6 @@ export function createGhlClient(config: GhlClientConfig) {
       contactId: string,
       tags: string[],
     ): Promise<GhlContact> {
-      if (isShadowMode()) {
-        shadowLog("ghl.addContactTags", { locationId, contactId, tags });
-        return { id: contactId, locationId } as GhlContact;
-      }
       return request<GhlContact>("PUT", `/contacts/${contactId}`, { tags }, {
         location_id: locationId,
       });
@@ -259,10 +234,6 @@ export function createGhlClient(config: GhlClientConfig) {
       contactId: string,
       tags: string[],
     ): Promise<GhlContact> {
-      if (isShadowMode()) {
-        shadowLog("ghl.removeContactTags", { locationId, contactId, tags });
-        return { id: contactId, locationId } as GhlContact;
-      }
       return request<GhlContact>("DELETE", `/contacts/${contactId}/tags`, { tags }, {
         location_id: locationId,
       });
@@ -273,10 +244,6 @@ export function createGhlClient(config: GhlClientConfig) {
       contactId: string,
       { message, channel }: GhlMessagePayload,
     ): Promise<unknown> {
-      if (isShadowMode()) {
-        shadowLog("ghl.sendMessage", { locationId, contactId, message, channel });
-        return { shadowSkipped: true };
-      }
       return request<unknown>("POST", "/conversations/messages", {
         locationId,
         contactId,
@@ -309,10 +276,6 @@ export function createGhlClient(config: GhlClientConfig) {
       locationId: string,
       payload: GhlOpportunityPayload,
     ): Promise<GhlOpportunity> {
-      if (isShadowMode()) {
-        shadowLog("ghl.createOpportunity", { locationId, payload });
-        return { id: "shadow-opp-id", ...payload } as GhlOpportunity;
-      }
       return request<GhlOpportunity>("POST", "/opportunities/", {
         ...payload,
         locationId,
@@ -324,10 +287,6 @@ export function createGhlClient(config: GhlClientConfig) {
       opportunityId: string,
       stageId: string,
     ): Promise<GhlOpportunity> {
-      if (isShadowMode()) {
-        shadowLog("ghl.updateOpportunityStage", { locationId, opportunityId, stageId });
-        return { id: opportunityId, pipelineStageId: stageId, locationId } as GhlOpportunity;
-      }
       return request<GhlOpportunity>(
         "PUT",
         `/opportunities/${opportunityId}`,
@@ -351,21 +310,6 @@ export function createGhlClient(config: GhlClientConfig) {
       currentStageId?: string,
       escalationStageId?: string,
     ): Promise<GhlStageUpdateResult> {
-      if (isShadowMode()) {
-        shadowLog("ghl.updateOpportunityStageSafe", {
-          locationId,
-          opportunityId,
-          targetStageId,
-          currentStageId,
-          escalationStageId,
-        });
-        return {
-          id: opportunityId,
-          pipelineStageId: targetStageId,
-          skipped: true,
-          reason: "shadow_mode",
-        } as GhlStageUpdateResult;
-      }
       const targetIsBooking = isConfirmedBooking(targetStageId);
       const targetIsHumanTouch = isHumanTouch(targetStageId);
 
@@ -399,6 +343,151 @@ export function createGhlClient(config: GhlClientConfig) {
       }
 
       return updated as GhlStageUpdateResult;
+    },
+  };
+}
+
+export function createShadowGhlClient(config: GhlClientConfig) {
+  const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
+  const token = config.token;
+  const version = config.version ?? DEFAULT_VERSION;
+  const stageRank = config.stageRank ?? DEFAULT_STAGE_RANK;
+  const confirmedBookingStageIds =
+    config.confirmedBookingStageIds ?? DEFAULT_CONFIRMED_BOOKING_STAGE_IDS;
+  const humanTouchStageIds =
+    config.humanTouchStageIds ?? DEFAULT_HUMAN_TOUCH_STAGE_IDS;
+
+  if (!token) {
+    throw new Error("GHL_PIT (Private Integration Token) is required");
+  }
+
+  function shadowLog(action: string, params: Record<string, unknown>) {
+    const entry = { shadow: true, action, ...params };
+    if (config.logger) {
+      config.logger.info("SHADOW: would have " + action, entry);
+    } else {
+      console.log(JSON.stringify(entry));
+    }
+  }
+
+  function stageRankOf(stageId: string | undefined): number {
+    if (!stageId) return -1;
+    const idx = stageRank.indexOf(stageId);
+    return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+  }
+
+  function isConfirmedBooking(stageId: string | undefined): boolean {
+    return !!stageId && confirmedBookingStageIds.includes(stageId);
+  }
+
+  function isHumanTouch(stageId: string | undefined): boolean {
+    return !!stageId && humanTouchStageIds.includes(stageId);
+  }
+
+  return {
+    async getContact(
+      locationId: string,
+      contactId: string,
+    ): Promise<GhlContact> {
+      return { id: contactId, locationId } as GhlContact;
+    },
+
+    async searchContacts(
+      locationId: string,
+      options: { email?: string; phone?: string } = {},
+    ): Promise<GhlContact[]> {
+      return [];
+    },
+
+    async createContact(
+      locationId: string,
+      payload: GhlContactPayload,
+    ): Promise<GhlContact> {
+      shadowLog("ghl.createContact", { locationId, payload });
+      return { id: "shadow-contact-id", locationId, ...payload } as GhlContact;
+    },
+
+    async updateContact(
+      locationId: string,
+      contactId: string,
+      payload: GhlContactPayload,
+    ): Promise<GhlContact> {
+      shadowLog("ghl.updateContact", { locationId, contactId, payload });
+      return { id: contactId, locationId, ...payload } as GhlContact;
+    },
+
+    async addContactTags(
+      locationId: string,
+      contactId: string,
+      tags: string[],
+    ): Promise<GhlContact> {
+      shadowLog("ghl.addContactTags", { locationId, contactId, tags });
+      return { id: contactId, locationId } as GhlContact;
+    },
+
+    async removeContactTags(
+      locationId: string,
+      contactId: string,
+      tags: string[],
+    ): Promise<GhlContact> {
+      shadowLog("ghl.removeContactTags", { locationId, contactId, tags });
+      return { id: contactId, locationId } as GhlContact;
+    },
+
+    async sendMessage(
+      locationId: string,
+      contactId: string,
+      { message, channel }: GhlMessagePayload,
+    ): Promise<unknown> {
+      shadowLog("ghl.sendMessage", { locationId, contactId, message, channel });
+      return { shadowSkipped: true };
+    },
+
+    async getPipelineOpportunities(
+      locationId: string,
+      contactId: string,
+      pipelineId?: string,
+    ): Promise<GhlOpportunity[]> {
+      return [];
+    },
+
+    async createOpportunity(
+      locationId: string,
+      payload: GhlOpportunityPayload,
+    ): Promise<GhlOpportunity> {
+      shadowLog("ghl.createOpportunity", { locationId, payload });
+      return { id: "shadow-opp-id", ...payload } as GhlOpportunity;
+    },
+
+    async updateOpportunityStage(
+      locationId: string,
+      opportunityId: string,
+      stageId: string,
+    ): Promise<GhlOpportunity> {
+      shadowLog("ghl.updateOpportunityStage", { locationId, opportunityId, stageId });
+      return { id: opportunityId, pipelineStageId: stageId, locationId } as GhlOpportunity;
+    },
+
+    async updateOpportunityStageSafe(
+      locationId: string,
+      opportunityId: string,
+      targetStageId: string,
+      currentStageId?: string,
+      escalationStageId?: string,
+    ): Promise<GhlStageUpdateResult> {
+      shadowLog("ghl.updateOpportunityStageSafe", {
+        locationId,
+        opportunityId,
+        targetStageId,
+        currentStageId,
+        escalationStageId,
+      });
+      return {
+        id: opportunityId,
+        pipelineStageId: targetStageId,
+        skipped: true,
+        reason: "shadow_mode",
+      } as GhlStageUpdateResult;
     },
   };
 }
