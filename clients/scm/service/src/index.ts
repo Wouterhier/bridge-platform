@@ -35,6 +35,8 @@ const db = new Pool({ connectionString: DATABASE_URL });
 const isShadow = process.env.SHADOW_MODE === "true";
 if (isShadow) {
   console.log("[selfcaremen-conversation] Starting in SHADOW MODE - all writes suppressed");
+} else {
+  console.log("[selfcaremen-conversation] Starting in LIVE MODE - real GHL/Acuity/Stripe clients active");
 }
 
 const ghl = isShadow
