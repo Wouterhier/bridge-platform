@@ -233,7 +233,7 @@ async function shouldDebounce(
 ): Promise<boolean> {
   const result = await db.query<{ processed_at: Date }>(
     `SELECT processed_at FROM processed_messages
-     WHERE contact_id = $1
+     WHERE contact_id = $1 AND send_payload IS NOT NULL
      ORDER BY processed_at DESC
      LIMIT 1`,
     [contactId],
