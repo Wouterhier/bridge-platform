@@ -4,6 +4,11 @@ import Stripe from "stripe";
 export interface StripeClientConfig {
   secretKey: string;
   apiVersion?: Stripe.LatestApiVersion;
+  logger?: {
+    info: (msg: string, meta?: Record<string, unknown>) => void;
+    warn: (msg: string, meta?: Record<string, unknown>) => void;
+    error: (msg: string, meta?: Record<string, unknown>) => void;
+  };
 }
 
 export interface CheckoutSessionPayload {
@@ -31,10 +36,24 @@ export interface CheckoutSessionResult {
   [key: string]: unknown;
 }
 
+function isShadowMode(): boolean {
+  return process.env.SHADOW_MODE === "true";
+}
+
 export function createStripeClient(config: StripeClientConfig) {
   const stripe = new Stripe(config.secretKey, {
     apiVersion: config.apiVersion ?? "2025-02-24.acacia",
   });
+  const logger = config.logger;
+
+  function shadowLog(action: string, params: Record<string, unknown>) {
+    const entry = { shadow: true, action, ...params };
+    if (logger) {
+      logger.info("SHADOW: would have " + action, entry);
+    } else {
+      console.log(JSON.stringify(entry));
+    }
+  }
 
   return {
     stripe,
@@ -42,6 +61,19 @@ export function createStripeClient(config: StripeClientConfig) {
     async createCheckoutSession(
       payload: CheckoutSessionPayload,
     ): Promise<CheckoutSessionResult> {
+      if (isShadowMode()) {
+        shadowLog("stripe.createCheckoutSession", {
+          lineItems: payload.lineItems,
+          customerEmail: payload.customerEmail,
+          clientReferenceId: payload.clientReferenceId,
+          metadata: payload.metadata,
+        });
+        return {
+          id: "shadow-session-id",
+          url: "https://shadow.example.com/checkout",
+          status: "open",
+        };
+      }
       const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] =
         payload.lineItems.map((item) => {
           if (item.price) {

@@ -14,7 +14,10 @@ import { recoverUnsentReplies } from "@romea/bridge-db";
 config({ path: resolve(process.cwd(), "clients/scm/.env") });
 
 const PORT = Number(process.env.PAYMENT_PORT ?? 3001);
-const DATABASE_URL = process.env.DATABASE_URL ?? "";
+const DATABASE_URL =
+  process.env.SHADOW_MODE === "true"
+    ? (process.env.SHADOW_DATABASE_URL ?? process.env.DATABASE_URL ?? "")
+    : (process.env.DATABASE_URL ?? "");
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 30000);
 const GHL_PIPELINE_ID = process.env.GHL_PIPELINE_ID ?? "";
 const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID ?? "";

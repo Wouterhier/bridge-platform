@@ -266,6 +266,14 @@ export function compactHistory(history: HistoryMessage[]): string[] {
   });
 }
 
+function structuredWarn(action: string, params: Record<string, unknown>) {
+  console.warn(JSON.stringify({
+    shadow: process.env.SHADOW_MODE === "true",
+    action,
+    ...params,
+  }));
+}
+
 /* ── Unsanctioned contact-info stripper ────────────────────────────────── */
 function stripUnsanctionedContactInfo(
   text: string,
@@ -277,7 +285,7 @@ function stripUnsanctionedContactInfo(
   const urlRegex = /https?:\/\/[^\s)"\]]+/g;
   result = result.replace(urlRegex, (match) => {
     if (sanctionedUrls.some((u) => match.startsWith(u))) return match;
-    console.warn(`[generate] Stripped unsanctioned URL: ${match}`);
+    structuredWarn("stripper.url", { detected: match, truncated: text.slice(0, 80) });
     return "__UNSCTIONED_URL__";
   });
 
@@ -300,9 +308,7 @@ function stripUnsanctionedContactInfo(
         if (!raw.startsWith("+") && !/[()\s-]/.test(raw)) {
           return match;
         }
-        console.warn(
-          `[generate] Stripped sentence with phone: ${match.trim().slice(0, 60)}`,
-        );
+        structuredWarn("stripper.phone", { detected: raw, truncated: match.trim().slice(0, 80) });
         return "";
       }
     }
@@ -353,18 +359,14 @@ export function sanitizeOutput(
     const lower = sanitized.toLowerCase();
     for (const word of commitmentWords) {
       if (lower.includes(word)) {
-        console.warn(
-          `[generate] Pre-payment message contains commitment word "${word}": ${sanitized.slice(0, 120)}`,
-        );
+        structuredWarn("injector.commitmentWord", { word, truncated: sanitized.slice(0, 120) });
       }
     }
   }
 
   /* Post-generation slot echo check */
   if (collected?.slotFormatted && !sanitized.includes(collected.slotFormatted)) {
-    console.warn(
-      `[generate] Generated text does not echo the code-formatted slot string: expected "${collected.slotFormatted}"`,
-    );
+    structuredWarn("injector.slotEchoMismatch", { expected: collected.slotFormatted, truncated: sanitized.slice(0, 120) });
   }
 
   return sanitized;

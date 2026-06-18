@@ -11,6 +11,7 @@ export interface AcuityClientConfig {
   baseUrl?: string;
   db?: Db;
   logger?: {
+    info: (msg: string, meta?: Record<string, unknown>) => void;
     warn: (msg: string, meta?: Record<string, unknown>) => void;
     error: (msg: string, meta?: Record<string, unknown>) => void;
   };
@@ -76,6 +77,10 @@ const DEFAULT_BASE_URL = "https://acuityscheduling.com/api/v1";
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1500, 4000]; // exponential-ish backoff
 
+function isShadowMode(): boolean {
+  return process.env.SHADOW_MODE === "true";
+}
+
 export function createAcuityClient(config: AcuityClientConfig) {
   const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const auth = Buffer.from(`${config.userId}:${config.apiKey}`).toString(
@@ -87,6 +92,15 @@ export function createAcuityClient(config: AcuityClientConfig) {
 
   if (!config.userId || !config.apiKey) {
     throw new Error("ACUITY_USER_ID and ACUITY_API_KEY are required");
+  }
+
+  function shadowLog(action: string, params: Record<string, unknown>) {
+    const entry = { shadow: true, action, ...params };
+    if (logger) {
+      logger.info("SHADOW: would have " + action, entry);
+    } else {
+      console.log(JSON.stringify(entry));
+    }
   }
 
   function headers(): Record<string, string> {
@@ -236,6 +250,15 @@ export function createAcuityClient(config: AcuityClientConfig) {
         ...acuityPayload
       } = payload;
 
+      if (isShadowMode()) {
+        shadowLog("acuity.createAppointment", { idempotencyKey, ...acuityPayload });
+        return {
+          id: 999999,
+          type: String(acuityPayload.appointmentTypeID),
+          ...acuityPayload,
+        } as AcuityAppointment;
+      }
+
       if (idempotencyKey) {
         if (!db) {
           throw new Error(
@@ -306,6 +329,10 @@ export function createAcuityClient(config: AcuityClientConfig) {
       id: number,
       fields: AcuityFormField[],
     ): Promise<AcuityAppointment> {
+      if (isShadowMode()) {
+        shadowLog("acuity.updateAppointmentFormFields", { id, fields });
+        return { id, fields } as AcuityAppointment;
+      }
       return requestWithRetry<AcuityAppointment>("PUT", `/appointments/${id}`, { fields });
     },
   };
@@ -320,13 +347,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class AcuityApiError extends Error {
+  public readonly status: number;
+  public readonly data: unknown;
+
   constructor(
     message: string,
-    public readonly status: number,
-    public readonly data: unknown,
+    status: number,
+    data: unknown,
   ) {
     super(message);
     this.name = "AcuityApiError";
+    this.status = status;
+    this.data = data;
   }
 }
 

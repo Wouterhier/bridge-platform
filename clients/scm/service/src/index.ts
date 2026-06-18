@@ -13,7 +13,10 @@ import { createRouter } from "@romea/scm-flow";
 config({ path: resolve(process.cwd(), "clients/scm/.env") });
 
 const PORT = Number(process.env.PORT ?? 3000);
-const DATABASE_URL = process.env.DATABASE_URL ?? "";
+const DATABASE_URL =
+  process.env.SHADOW_MODE === "true"
+    ? (process.env.SHADOW_DATABASE_URL ?? process.env.DATABASE_URL ?? "")
+    : (process.env.DATABASE_URL ?? "");
 const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 2000);
 const HOLDING_THRESHOLD_MS = Number(
   process.env.HOLDING_THRESHOLD_MS ?? 3000,
