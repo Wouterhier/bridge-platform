@@ -220,7 +220,7 @@ function stageIdForState(
 
 async function isMessageProcessed(db: Pool, messageId: string): Promise<boolean> {
   const result = await db.query<{ exists: boolean }>(
-    `SELECT EXISTS(SELECT 1 FROM processed_messages WHERE message_id = $1)`,
+    `SELECT EXISTS(SELECT 1 FROM processed_messages WHERE message_id = $1 AND send_payload IS NOT NULL)`,
     [messageId],
   );
   return result.rows[0]?.exists ?? false;
@@ -472,14 +472,14 @@ export class ConversationService {
       : collected.serviceKey !== conversation.collected_fields.serviceKey ? "serviceKey"
       : collected.slotIso !== conversation.collected_fields.slotIso ? "slotIso"
       : "none";
-    console.info(JSON.stringify({
+    process.stdout.write(JSON.stringify({
       action: "state.transition",
       contactId: contact_id,
       fromState: currentState,
       toState: nextState,
       field: transitionedField,
       durationMs: smDuration,
-    }), "state advanced");
+    }) + "\n");
 
     /* 6b. Store formatted slot when patient selected one */
     if (
@@ -612,7 +612,7 @@ export class ConversationService {
       /* Leave sent_at NULL so recovery will retry.
          Increment attempts so we can eventually give up. */
       await incrementSendAttempts(db, messageId);
-      console.error("[conversation-service] GHL send failed:", err);
+      process.stderr.write("[conversation-service] GHL send failed: " + String(err) + "\n");
     }
 
     /* 11. Update conversation state in Postgres */
@@ -680,7 +680,7 @@ export class ConversationService {
             channel: "sms",
           });
         } catch (e) {
-          console.error("[conversation-service] holding message failed:", e);
+          process.stderr.write("[conversation-service] holding message failed: " + String(e) + "\n");
         }
       }, holdingThresholdMs);
 
@@ -800,7 +800,7 @@ export class ConversationService {
             channel: "sms",
           });
         } catch (e) {
-          console.error("[conversation-service] holding message failed:", e);
+          process.stderr.write("[conversation-service] holding message failed: " + String(e) + "\n");
         }
       }, holdingThresholdMs);
 
@@ -945,7 +945,7 @@ export class ConversationService {
         channel: "sms",
       });
     } catch (e) {
-      console.error("[conversation-service] escalation send failed:", e);
+      process.stderr.write("[conversation-service] escalation send failed: " + String(e) + "\n");
     }
 
     /* Update stage */
@@ -1001,7 +1001,7 @@ export class ConversationService {
         });
       }
     } catch (err) {
-      console.error("[conversation-service] stage update failed:", err);
+      process.stderr.write("[conversation-service] stage update failed: " + String(err) + "\n");
     }
   }
 }

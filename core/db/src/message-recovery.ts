@@ -11,10 +11,11 @@ export interface SendPayload {
   locationId: string;
 }
 
-interface UnsentReplyRow {
+interface RecoveryRow {
   message_id: string;
   contact_id: string;
-  send_payload: SendPayload;
+  send_payload: SendPayload | null;
+  raw_inbound: unknown | null;
   send_attempts: number;
 }
 
@@ -64,17 +65,25 @@ export async function incrementSendAttempts(
 /**
  * Recover unsent replies on startup.
  *
+ * Three-state recovery:
+ *   State A: received, not yet processed (send_payload IS NULL AND send_attempts = 0)
+ *            → re-process from scratch using raw_inbound
+ *   State B: processed, reply generated, not sent (send_payload IS NOT NULL AND sent_at IS NULL)
+ *            → re-send the stored reply
+ *   State C: sent (sent_at IS NOT NULL)
+ *            → done, do nothing
+ *
  * GHL SMS/chat message sends are idempotent enough for at-least-once:
  * sending the same text twice is acceptable (the patient may see a
- * duplicate, which is better than a silent drop).  If a row already
- * has `sent_at` set we never re-send it.
+ * duplicate, which is better than a silent drop).
  */
 export async function recoverUnsentReplies(
   db: Db,
   sendMessage: (locationId: string, contactId: string, payload: { message: string; channel: string }) => Promise<unknown>,
+  reprocessInbound?: (rawPayload: unknown) => Promise<unknown>,
 ): Promise<void> {
-  const result = await db.query<UnsentReplyRow>(
-    `SELECT message_id, contact_id, send_payload, send_attempts
+  const result = await db.query<RecoveryRow>(
+    `SELECT message_id, contact_id, send_payload, raw_inbound, send_attempts
      FROM processed_messages
      WHERE sent_at IS NULL
        AND send_attempts < $1
@@ -84,17 +93,29 @@ export async function recoverUnsentReplies(
 
   if (result.rows.length === 0) return;
 
-  console.log(`[recoverUnsentReplies] found ${result.rows.length} unsent reply(s)`);
+  process.stdout.write(`[recoverUnsentReplies] found ${result.rows.length} unsent reply(s)\n`);
 
   for (const row of result.rows) {
     try {
-      const { locationId, ...payload } = row.send_payload;
-      await sendMessage(locationId, row.contact_id, payload);
-      await markMessageSent(db, row.message_id);
-      console.log(`[recoverUnsentReplies] resent ${row.message_id}`);
+      if (row.send_payload !== null) {
+        // State B: reply generated but not sent - re-send
+        const { locationId, ...payload } = row.send_payload;
+        await sendMessage(locationId, row.contact_id, payload);
+        await markMessageSent(db, row.message_id);
+        process.stdout.write(`[recoverUnsentReplies] resent reply for ${row.message_id}\n`);
+      } else if (row.raw_inbound !== null && reprocessInbound) {
+        // State A: received but never processed - re-process from scratch
+        // Delete the placeholder row first so processing can re-insert cleanly
+        await db.query('DELETE FROM processed_messages WHERE message_id = $1', [row.message_id]);
+        process.stdout.write(`[recoverUnsentReplies] re-processing ${row.message_id} (never processed)\n`);
+        await reprocessInbound(row.raw_inbound);
+      } else {
+        // No send_payload AND no raw_inbound AND no reprocessInbound - log and leave
+        process.stderr.write(`[recoverUnsentReplies] cannot recover ${row.message_id}: no send_payload, no raw_inbound\n`);
+      }
     } catch (err) {
       await incrementSendAttempts(db, row.message_id);
-      console.error(`[recoverUnsentReplies] failed to resend ${row.message_id}:`, err);
+      process.stderr.write(`[recoverUnsentReplies] failed to recover ${row.message_id}: ${String(err)}\n`);
     }
   }
 }

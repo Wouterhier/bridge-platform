@@ -113,7 +113,7 @@ app.post(
       if (err instanceof WebhookError) {
         res.status(err.statusCode).json({ error: err.message });
       } else {
-        console.error("[index] unhandled webhook error:", err);
+        process.stderr.write("[index] unhandled webhook error: " + String(err) + "\n");
         res.status(500).json({ error: "internal_error" });
       }
     }

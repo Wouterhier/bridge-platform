@@ -467,10 +467,11 @@ describe("conversation-service", () => {
 
     const contactId = "test-contact-dedup";
 
-    /* Pre-seed processed_messages row */
+    /* Pre-seed processed_messages row (fully processed — has send_payload) */
     await db.query(
-      `INSERT INTO processed_messages (message_id, contact_id) VALUES ($1, $2)`,
-      ["msg-restart-001", contactId],
+      `INSERT INTO processed_messages (message_id, contact_id, send_payload, send_attempts)
+       VALUES ($1, $2, $3, 1)`,
+      ["msg-restart-001", contactId, JSON.stringify({ message: "Hello back", channel: "sms", locationId: "test-loc-001" })],
     );
 
     const serviceA = new ConversationService({

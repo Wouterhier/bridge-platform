@@ -267,11 +267,11 @@ export function compactHistory(history: HistoryMessage[]): string[] {
 }
 
 function structuredWarn(action: string, detected: unknown, context: string) {
-  console.warn(JSON.stringify({
+  process.stderr.write(JSON.stringify({
     action,
     detected,
     context: context.slice(0, 80),
-  }));
+  }) + "\n");
 }
 
 /* ── Unsanctioned contact-info stripper ────────────────────────────────── */

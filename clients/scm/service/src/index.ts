@@ -73,8 +73,11 @@ const service = new ConversationService({
 });
 
 /* Recover any unsent replies from previous crash before accepting traffic */
-await recoverUnsentReplies(db, (locationId, contactId, payload) =>
-  ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+await recoverUnsentReplies(
+  db,
+  (locationId, contactId, payload) =>
+    ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+  (rawPayload) => service.handleInbound(rawPayload),  // re-process state-A rows
 );
 
 const app = express();
@@ -109,8 +112,10 @@ app.post("/selfcaremen", async (req, res) => {
 
   /* 2. Persist to processed_messages BEFORE 202 ack */
   await db.query(
-    "INSERT INTO processed_messages (message_id, contact_id, send_attempts) VALUES ($1, $2, 0) ON CONFLICT DO NOTHING",
-    [messageId, parsed.contact_id],
+    `INSERT INTO processed_messages (message_id, contact_id, send_attempts, raw_inbound)
+     VALUES ($1, $2, 0, $3)
+     ON CONFLICT DO NOTHING`,
+    [messageId, parsed.contact_id, JSON.stringify(rawPayload)],
   );
 
   /* 3. 202 immediately */
@@ -118,7 +123,7 @@ app.post("/selfcaremen", async (req, res) => {
 
   /* 4. Process async in background — crash here is recovered by startup recoverUnsentReplies() */
   service.handleInbound(rawPayload).catch((err) => {
-    console.error("[index] background processing failed:", { messageId, err });
+    process.stderr.write("[index] background processing failed: " + JSON.stringify({ messageId, err }) + "\n");
   });
 });
 
