@@ -10,7 +10,8 @@ import {
 import { Pool } from "pg";
 import { config } from "dotenv";
 import { resolve } from "node:path";
-import { ConversationService, recoverUnsentReplies, type InboundPayload } from "../../service/src/conversation-service.js";
+import { readFileSync } from "node:fs";
+import { ConversationService, recoverUnsentReplies } from "../../service/src/conversation-service.js";
 import { PaymentService, WebhookError } from "../../payment-service/src/payment-service.js";
 import { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
@@ -21,6 +22,9 @@ import Stripe from "stripe";
 import { onPaymentConfirmed } from "../../payment-service/src/payment-processor.js";
 
 config({ path: resolve(process.cwd(), "clients/scm/.env") });
+
+const fixturePath = resolve(process.cwd(), "clients/scm/harness/fixtures/ghl-real-inbound-payload.json");
+const basePayload = JSON.parse(readFileSync(fixturePath, "utf-8"));
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "";
 
@@ -114,11 +118,11 @@ function createMockRouter(): ModelRouter {
   } as unknown as ModelRouter;
 }
 
-function makePayload(overrides: Partial<InboundPayload> = {}): InboundPayload {
+function makePayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    contact_id: "test-contact-001",
+    ...structuredClone(basePayload),
     location_id: "test-loc-001",
-    message: { id: "msg-001", body: "Hello", direction: "inbound", type: "SMS" },
+    contact_id: "test-contact-001",
     ...overrides,
   };
 }

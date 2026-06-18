@@ -1,0 +1,26 @@
+{
+  "type": "InboundMessage",
+  "locationId": "loc-real-001",
+  "contactId": "contact-real-001",
+  "conversationId": "conv-001",
+  "channel": "SMS",
+  "messageType": "SMS",
+  "direction": "inbound",
+  "message": {
+    "id": "msg-real-001",
+    "conversationId": "conv-001",
+    "body": "Hi I'd like to book",
+    "type": "TYPE_SMS",
+    "direction": "INBOUND",
+    "dateAdded": "2026-06-11T16:59:10.243Z"
+  },
+  "contact": {
+    "id": "contact-real-001",
+    "locationId": "loc-real-001",
+    "firstName": "Finn",
+    "lastName": "Roberts",
+    "email": "finn@example.com",
+    "phone": "+64210000001",
+    "tags": []
+  }
+}

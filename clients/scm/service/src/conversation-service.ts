@@ -42,6 +42,72 @@ export interface InboundPayload {
   message: InboundMessage;
 }
 
+/**
+ * Parse a raw GHL inbound webhook payload into the normalized InboundPayload.
+ * Handles both the native InboundMessage API shape and the flat workflow-webhook shape.
+ */
+export function parseInbound(raw: unknown): InboundPayload | null {
+  if (!raw || typeof raw !== "object") return null;
+  const payload = raw as Record<string, unknown>;
+
+  /* ── contactId ── */
+  const contactId =
+    (payload.contact_id as string) ||
+    (payload.contactId as string) ||
+    (payload.contact as Record<string, string> | undefined)?.id;
+  if (!contactId) return null;
+
+  /* ── locationId ── */
+  const locationId =
+    (payload.location_id as string) ||
+    (payload.locationId as string) ||
+    (payload.location as Record<string, string> | undefined)?.id;
+  if (!locationId) return null;
+
+  /* ── message ── */
+  const msgRaw = payload.message;
+  let messageBody = "";
+  let messageId = "";
+  let messageType = "";
+  let messageDirection = "inbound";
+
+  if (typeof msgRaw === "string") {
+    messageBody = msgRaw;
+  } else if (msgRaw && typeof msgRaw === "object") {
+    const msgObj = msgRaw as Record<string, unknown>;
+    messageBody = (msgObj.body as string) || (msgObj.text as string) || "";
+    messageId = (msgObj.id as string) || "";
+    messageType = (msgObj.type as string) || "";
+    messageDirection = (msgObj.direction as string) || "inbound";
+  }
+
+  /* Top-level fallbacks when message wrapper is absent */
+  if (!messageBody) {
+    messageBody = (payload.body as string) || (payload.text as string) || "";
+  }
+  if (!messageId) {
+    messageId = (payload.message_id as string) || "";
+  }
+  if (!messageType) {
+    messageType =
+      (payload.type as string) ||
+      (payload.messageType as string) ||
+      (payload.message_type as string) ||
+      "";
+  }
+
+  return {
+    contact_id: contactId,
+    location_id: locationId,
+    message: {
+      id: messageId,
+      body: messageBody,
+      direction: messageDirection,
+      type: messageType,
+    },
+  };
+}
+
 export interface HandlerResult {
   sent: boolean;
   reply?: string;
@@ -226,6 +292,7 @@ function mapMessageTypeToChannel(type: string): "sms" | "live_chat" | "whatsapp"
   if (lower === "sms") return "sms";
   if (lower === "live_chat" || lower === "livechat") return "live_chat";
   if (lower === "whatsapp") return "whatsapp";
+  if (lower === "email") return "email";
   return "sms";
 }
 
@@ -312,7 +379,12 @@ export class ConversationService {
     }
   }
 
-  async handleInbound(payload: InboundPayload): Promise<HandlerResult> {
+  async handleInbound(rawPayload: unknown): Promise<HandlerResult> {
+    const payload = parseInbound(rawPayload);
+    if (!payload) {
+      return { sent: false, reason: "invalid_payload" };
+    }
+
     const { db, ghl, acuity, stripe, router, debounceMs, holdingThresholdMs } =
       this.deps;
     const { contact_id, location_id, message } = payload;
@@ -378,6 +450,7 @@ export class ConversationService {
     /* 6. Run state machine */
     const context: ScmContext =
       (conversation.context as ScmContext) ?? {};
+    const smStart = Date.now();
     const transition = await this.engine.process({
       rawMessage: enrichedRawMessage,
       conversation: {
@@ -386,9 +459,27 @@ export class ConversationService {
       },
       context,
     });
+    const smDuration = Date.now() - smStart;
 
     let nextState = transition.state;
     let collected = transition.collected as CollectedWithExtras;
+
+    /* Structured log for every state transition */
+    const transitionedField =
+      collected.fullName !== conversation.collected_fields.fullName ? "fullName"
+      : collected.phone !== conversation.collected_fields.phone ? "phone"
+      : collected.email !== conversation.collected_fields.email ? "email"
+      : collected.serviceKey !== conversation.collected_fields.serviceKey ? "serviceKey"
+      : collected.slotIso !== conversation.collected_fields.slotIso ? "slotIso"
+      : "none";
+    console.info(JSON.stringify({
+      action: "state.transition",
+      contactId: contact_id,
+      fromState: currentState,
+      toState: nextState,
+      field: transitionedField,
+      durationMs: smDuration,
+    }), "state advanced");
 
     /* 6b. Store formatted slot when patient selected one */
     if (

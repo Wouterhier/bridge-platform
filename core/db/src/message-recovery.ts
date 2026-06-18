@@ -29,7 +29,9 @@ export async function markMessageProcessed(
   await db.query(
     `INSERT INTO processed_messages (message_id, contact_id, sent_at, send_payload, send_attempts)
      VALUES ($1, $2, NULL, $3, 0)
-     ON CONFLICT (message_id) DO NOTHING`,
+     ON CONFLICT (message_id) DO UPDATE SET
+       send_payload = EXCLUDED.send_payload,
+       contact_id = EXCLUDED.contact_id`,
     [messageId, contactId, JSON.stringify(sendPayload)],
   );
 }

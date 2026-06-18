@@ -89,10 +89,6 @@ const DEFAULT_HUMAN_TOUCH_STAGE_IDS: string[] = [
   "d1cb71e3-4e11-4b7b-bffc-a6c574a9c5f4", // HUMAN_TOUCH
 ];
 
-function isShadowMode(): boolean {
-  return process.env.SHADOW_MODE === "true";
-}
-
 export function createGhlClient(config: GhlClientConfig) {
   const baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
   const token = config.token;
@@ -102,19 +98,9 @@ export function createGhlClient(config: GhlClientConfig) {
     config.confirmedBookingStageIds ?? DEFAULT_CONFIRMED_BOOKING_STAGE_IDS;
   const humanTouchStageIds =
     config.humanTouchStageIds ?? DEFAULT_HUMAN_TOUCH_STAGE_IDS;
-  const logger = config.logger;
 
   if (!token) {
     throw new Error("GHL_PIT (Private Integration Token) is required");
-  }
-
-  function shadowLog(action: string, params: Record<string, unknown>) {
-    const entry = { shadow: true, action, ...params };
-    if (logger) {
-      logger.info("SHADOW: would have " + action, entry);
-    } else {
-      console.log(JSON.stringify(entry));
-    }
   }
 
   function headers(): Record<string, string> {
@@ -124,6 +110,19 @@ export function createGhlClient(config: GhlClientConfig) {
       "Content-Type": "application/json",
       Accept: "application/json",
     };
+  }
+
+  function isShadowMode(): boolean {
+    return process.env.SHADOW_MODE === "true";
+  }
+
+  function shadowLog(action: string, params: Record<string, unknown>) {
+    const entry = { shadow: true, action, ...params };
+    if (config.logger) {
+      config.logger.info("SHADOW: would have " + action, entry);
+    } else {
+      console.log(JSON.stringify(entry));
+    }
   }
 
   async function request<T>(

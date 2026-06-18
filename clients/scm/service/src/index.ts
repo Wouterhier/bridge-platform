@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { resolve } from "node:path";
 import express from "express";
 import { Pool } from "pg";
-import { ConversationService, recoverUnsentReplies } from "./conversation-service.js";
+import { ConversationService, recoverUnsentReplies, parseInbound } from "./conversation-service.js";
 import { createGhlClient } from "@romea/ghl-client";
 import { createAcuityClient } from "@romea/acuity-client";
 import { createStripeClient } from "@romea/stripe-client";
@@ -71,23 +71,40 @@ app.get("/health", async (_req, res) => {
 });
 
 app.post("/selfcaremen", async (req, res) => {
-  const payload = req.body;
-  if (
-    !payload?.contact_id ||
-    !payload?.location_id ||
-    !payload?.message?.id
-  ) {
-    res.status(400).json({ error: "invalid_payload" });
-    return;
+  const rawPayload = req.body;
+  const parsed = parseInbound(rawPayload);
+
+  if (!parsed) {
+    return res.status(400).json({ error: "invalid_payload" });
   }
 
-  try {
-    const result = await service.handleInbound(payload);
-    res.status(200).json(result);
-  } catch (err) {
-    console.error("[index] unhandled error:", err);
-    res.status(500).json({ error: "internal_error" });
+  const messageId = parsed.message.id;
+  if (!messageId) {
+    return res.status(400).json({ error: "missing message id" });
   }
+
+  /* 1. Check dedup BEFORE ack */
+  const alreadyProcessed = await db.query(
+    "SELECT sent_at FROM processed_messages WHERE message_id = $1",
+    [messageId],
+  );
+  if (alreadyProcessed.rows.length > 0) {
+    return res.status(200).json({ status: "duplicate" });
+  }
+
+  /* 2. Persist to processed_messages BEFORE 202 ack */
+  await db.query(
+    "INSERT INTO processed_messages (message_id, contact_id, send_attempts) VALUES ($1, $2, 0) ON CONFLICT DO NOTHING",
+    [messageId, parsed.contact_id],
+  );
+
+  /* 3. 202 immediately */
+  res.status(202).json({ status: "accepted" });
+
+  /* 4. Process async in background — crash here is recovered by startup recoverUnsentReplies() */
+  service.handleInbound(rawPayload).catch((err) => {
+    console.error("[index] background processing failed:", { messageId, err });
+  });
 });
 
 const server = app.listen(PORT, () => {
