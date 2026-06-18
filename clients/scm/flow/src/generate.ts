@@ -271,7 +271,6 @@ function structuredWarn(action: string, detected: unknown, context: string) {
     action,
     detected,
     context: context.slice(0, 80),
-    shadow: process.env.SHADOW_MODE === "true",
   }));
 }
 

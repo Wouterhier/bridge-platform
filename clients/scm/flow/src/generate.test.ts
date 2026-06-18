@@ -219,7 +219,6 @@ describe("sanitizeOutput() warning behavior", () => {
         action: "injector.commitmentWord",
         detected: "confirmed",
         context: text.slice(0, 80),
-        shadow: false,
       }),
     );
     warnSpy.mockRestore();
@@ -234,7 +233,6 @@ describe("sanitizeOutput() warning behavior", () => {
         action: "injector.commitmentWord",
         detected: "booked",
         context: text.slice(0, 80),
-        shadow: false,
       }),
     );
     warnSpy.mockRestore();
