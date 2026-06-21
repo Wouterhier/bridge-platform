@@ -12,6 +12,8 @@ export interface ExtractionHint {
   email?: string;
   serviceKey?: string;
   slotIso?: string;
+  safety_concern?: boolean;
+  concern_type?: string;
 }
 
 interface HistoryMessage {
@@ -297,7 +299,13 @@ export async function extract(
   const req: ModelRequest = {
     role: "extract",
     system:
-      "You are a precise structured-data extractor for a medical clinic booking flow. Return ONLY valid JSON objects. Do not include markdown code fences or explanatory text.",
+      "You are a precise structured-data extractor for a medical clinic booking flow. Return ONLY valid JSON objects. Do not include markdown code fences or explanatory text.\n\n" +
+      "Additionally, if the patient's message contains ANY indication of:\n" +
+      "- Self-harm intent or suicidal ideation\n" +
+      "- Medical emergency\n" +
+      "- Expressions of hopelessness or wanting to die\n\n" +
+      'Return: { "safety_concern": true, "concern_type": "self_harm|medical_emergency|crisis" }\n' +
+      "alongside or instead of the regular extraction fields.",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.1,
     maxTokens: 512,

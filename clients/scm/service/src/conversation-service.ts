@@ -307,10 +307,12 @@ async function updateConversation(
 
 function mapMessageTypeToChannel(type: string): "sms" | "live_chat" | "whatsapp" | "email" {
   const lower = type.toLowerCase();
-  if (lower === "sms") return "sms";
-  if (lower === "live_chat" || lower === "livechat") return "live_chat";
-  if (lower === "whatsapp") return "whatsapp";
-  if (lower === "email") return "email";
+  // Handle both GHL prefixed types (TYPE_SMS, TYPE_LIVE_CHAT) and plain types
+  const normalized = lower.replace(/^type_/, "");
+  if (normalized === "sms") return "sms";
+  if (normalized === "live_chat" || normalized === "livechat") return "live_chat";
+  if (normalized === "whatsapp") return "whatsapp";
+  if (normalized === "email") return "email";
   return "sms";
 }
 
@@ -1038,6 +1040,7 @@ export class ConversationService {
           pipelineStageId: targetStageId,
           locationId,
           contactId,
+          name: "New Lead",
           status: "open",
         });
       }
