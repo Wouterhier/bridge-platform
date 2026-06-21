@@ -46,8 +46,10 @@ export interface GhlOpportunity {
 }
 
 export interface GhlMessagePayload {
+  type: "SMS" | "Live_Chat" | "WhatsApp" | "Email";
+  contactId?: string;      // required for SMS/WhatsApp/Email
+  conversationId?: string; // required for Live_Chat
   message: string;
-  channel: "sms" | "email" | "live_chat" | "whatsapp";
 }
 
 export interface GhlOpportunityPayload {
@@ -240,16 +242,11 @@ export function createGhlClient(config: GhlClientConfig) {
     },
 
     async sendMessage(
-      locationId: string,
-      contactId: string,
-      { message, channel }: GhlMessagePayload,
+      _locationId: string,
+      _contactId: string,
+      payload: GhlMessagePayload,
     ): Promise<unknown> {
-      return request<unknown>("POST", "/conversations/messages", {
-        locationId,
-        contactId,
-        message,
-        channel,
-      });
+      return request<unknown>("POST", "/conversations/messages", payload);
     },
 
     async getPipelineOpportunities(
@@ -437,9 +434,9 @@ export function createShadowGhlClient(config: GhlClientConfig) {
     async sendMessage(
       locationId: string,
       contactId: string,
-      { message, channel }: GhlMessagePayload,
+      payload: GhlMessagePayload,
     ): Promise<unknown> {
-      shadowLog("ghl.sendMessage", { locationId, contactId, message, channel });
+      shadowLog("ghl.sendMessage", { locationId, contactId, ...payload });
       return { shadowSkipped: true };
     },
 

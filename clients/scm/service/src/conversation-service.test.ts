@@ -8,6 +8,7 @@ import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
 import type { ModelRouter } from "@romea/model-router";
+import { createMockGhlClient } from "../../harness/src/mocks/ghl-mock.js";
 
 config({ path: resolve(process.cwd(), "clients/scm/.env") });
 
@@ -16,19 +17,7 @@ const basePayload = JSON.parse(readFileSync(fixturePath, "utf-8"));
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "";
 
-function createMockGhlClient(): ReturnType<typeof createGhlClient> {
-  return {
-    getContact: vi.fn(async () => ({ id: "c1" })),
-    searchContacts: vi.fn(async () => []),
-    createContact: vi.fn(async () => ({ id: "c1" })),
-    updateContact: vi.fn(async () => ({ id: "c1" })),
-    sendMessage: vi.fn(async () => ({})),
-    getPipelineOpportunities: vi.fn(async () => []),
-    createOpportunity: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStage: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStageSafe: vi.fn(async () => ({ id: "opp-1" })),
-  } as unknown as ReturnType<typeof createGhlClient>;
-}
+
 
 function createMockAcuityClient(
   overrides: {
@@ -471,7 +460,7 @@ describe("conversation-service", () => {
     await db.query(
       `INSERT INTO processed_messages (message_id, contact_id, send_payload, send_attempts)
        VALUES ($1, $2, $3, 1)`,
-      ["msg-restart-001", contactId, JSON.stringify({ message: "Hello back", channel: "sms", locationId: "test-loc-001" })],
+      ["msg-restart-001", contactId, JSON.stringify({ message: "Hello back", type: "SMS", contactId, locationId: "test-loc-001" })],
     );
 
     const serviceA = new ConversationService({
@@ -728,13 +717,14 @@ describe("conversation-service", () => {
     expect(pmResult.rows[0].send_attempts).toBe(1);
     expect(pmResult.rows[0].send_payload).toMatchObject({
       message: expect.any(String),
-      channel: "sms",
+      type: "SMS",
+      contactId: expect.any(String),
       locationId: "test-loc-001",
     });
 
     /* Simulate service restart: call recoverUnsentReplies */
     await recoverUnsentReplies(db, (locationId, contactId, payload) =>
-      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+      ghl.sendMessage(locationId, contactId, payload),
     );
 
     /* Assert ghl.sendMessage was called again with the same payload */
@@ -762,11 +752,11 @@ describe("conversation-service", () => {
     await db.query(
       `INSERT INTO processed_messages (message_id, contact_id, sent_at, send_payload, send_attempts)
        VALUES ($1, $2, now(), $3, 1)`,
-      ["already-sent-1", contactId, JSON.stringify({ message: "Hello", channel: "sms", locationId: "test-loc-001" })],
+      ["already-sent-1", contactId, JSON.stringify({ message: "Hello", type: "SMS", contactId, locationId: "test-loc-001" })],
     );
 
     await recoverUnsentReplies(db, (locationId, contactId, payload) =>
-      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+      ghl.sendMessage(locationId, contactId, payload),
     );
 
     /* Assert ghl.sendMessage was NOT called */
@@ -838,7 +828,7 @@ describe("conversation-service", () => {
     });
 
     await recoverUnsentReplies(db, (locationId, contactId, payload) =>
-      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+      ghl.sendMessage(locationId, contactId, payload),
     );
 
     /* Assert the reply was re-sent */

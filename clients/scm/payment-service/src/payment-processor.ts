@@ -199,10 +199,11 @@ export async function onPaymentConfirmed(
           if the process crashes before the actual send. */
     const confirmMessageId = `scm-confirm-${paymentSession.id}`;
     await markMessageProcessed(client, confirmMessageId, paymentSession.contact_id, {
+      type: "SMS",
+      contactId: paymentSession.contact_id,
       message: replyText,
-      channel: "sms",
       locationId: ghlLocationId,
-    });
+    } as import("@romea/bridge-db").SendPayload);
 
     /* 9. Commit transaction */
     await client.query("COMMIT");
@@ -211,8 +212,9 @@ export async function onPaymentConfirmed(
     let messageSent = false;
     try {
       await ghl.sendMessage(ghlLocationId, paymentSession.contact_id, {
+        type: "SMS",
+        contactId: paymentSession.contact_id,
         message: replyText,
-        channel: "sms",
       });
       messageSent = true;
       await markMessageSent(db, confirmMessageId);

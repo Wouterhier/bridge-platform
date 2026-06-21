@@ -74,7 +74,7 @@ const service = new PaymentService({
 /* Recover any unsent confirmation messages from a previous crash
    before we start accepting new webhooks. */
 await recoverUnsentReplies(db, (locationId, contactId, payload) =>
-  ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+  ghl.sendMessage(locationId, contactId, payload),
 );
 
 /* Start background poller for webhook-fallback idempotency */

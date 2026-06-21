@@ -39,6 +39,7 @@ export interface InboundMessage {
 export interface InboundPayload {
   contact_id: string;
   location_id: string;
+  conversation_id?: string;
   message: InboundMessage;
 }
 
@@ -63,6 +64,12 @@ export function parseInbound(raw: unknown): InboundPayload | null {
     (payload.locationId as string) ||
     (payload.location as Record<string, string> | undefined)?.id;
   if (!locationId) return null;
+
+  /* ── conversationId ── */
+  const conversationId =
+    (payload.conversationId as string) ||
+    (payload.conversation_id as string) ||
+    (payload.message as Record<string, unknown> | undefined)?.conversationId as string | undefined;
 
   /* ── message ── */
   const msgRaw = payload.message;
@@ -99,6 +106,7 @@ export function parseInbound(raw: unknown): InboundPayload | null {
   return {
     contact_id: contactId,
     location_id: locationId,
+    conversation_id: conversationId,
     message: {
       id: messageId,
       body: messageBody,
@@ -131,6 +139,7 @@ interface ConversationRow {
   id: string;
   contact_id: string;
   location_id: string;
+  ghl_conversation_id: string | null;
   current_state: string;
   collected_fields: Record<string, unknown>;
   context: Record<string, unknown>;
@@ -247,20 +256,29 @@ async function findOrCreateConversation(
   db: Pool,
   locationId: string,
   contactId: string,
+  ghlConversationId?: string,
 ): Promise<ConversationRow> {
   const existing = await db.query<ConversationRow>(
     `SELECT * FROM conversations WHERE location_id = $1 AND contact_id = $2 LIMIT 1`,
     [locationId, contactId],
   );
   if (existing.rows.length > 0) {
+    // Always update ghl_conversation_id if provided (GHL may rotate it)
+    if (ghlConversationId) {
+      await db.query(
+        `UPDATE conversations SET ghl_conversation_id = $1, updated_at = now() WHERE id = $2`,
+        [ghlConversationId, existing.rows[0].id],
+      );
+      return { ...existing.rows[0], ghl_conversation_id: ghlConversationId };
+    }
     return existing.rows[0];
   }
 
   const inserted = await db.query<ConversationRow>(
-    `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
-     VALUES ($1, $2, 'NEW', '{}', '{}')
+    `INSERT INTO conversations (location_id, contact_id, ghl_conversation_id, current_state, collected_fields, context)
+     VALUES ($1, $2, $3, 'NEW', '{}', '{}')
      RETURNING *`,
-    [locationId, contactId],
+    [locationId, contactId, ghlConversationId ?? null],
   );
   return inserted.rows[0];
 }
@@ -294,6 +312,30 @@ function mapMessageTypeToChannel(type: string): "sms" | "live_chat" | "whatsapp"
   if (lower === "whatsapp") return "whatsapp";
   if (lower === "email") return "email";
   return "sms";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Channel-aware send payload builder (ONE source of truth)           */
+/* ------------------------------------------------------------------ */
+
+function buildGhlSendPayload(
+  channel: "sms" | "live_chat" | "whatsapp" | "email",
+  contactId: string,
+  conversationId: string | undefined,
+  message: string,
+): import("@romea/ghl-client").GhlMessagePayload {
+  if (channel === "live_chat") {
+    if (!conversationId) {
+      process.stderr.write(
+        `[conversation-service] WARN: live_chat reply missing conversationId for contact ${contactId}, falling back to SMS\n`
+      );
+      return { type: "SMS", contactId, message };
+    }
+    return { type: "Live_Chat", conversationId, message };
+  }
+  if (channel === "whatsapp") return { type: "WhatsApp", contactId, message };
+  if (channel === "email") return { type: "Email", contactId, message };
+  return { type: "SMS", contactId, message };  // default
 }
 
 /* ------------------------------------------------------------------ */
@@ -396,11 +438,12 @@ export class ConversationService {
       return { sent: false, reason: `ignored:${classification}` };
     }
     if (classification === 'image') {
-      await ghl.sendMessage(location_id, contact_id, {
-        message: "I can't view images or attachments in this chat. A member of our team will review it and follow up shortly.",
-        channel: mapMessageTypeToChannel(message.type),
-      });
-      const conversation = await findOrCreateConversation(db, location_id, contact_id);
+      const imgChannel = mapMessageTypeToChannel(message.type);
+      await ghl.sendMessage(location_id, contact_id,
+        buildGhlSendPayload(imgChannel, contact_id, payload.conversation_id,
+          "I can't view images or attachments in this chat. A member of our team will review it and follow up shortly.")
+      );
+      const conversation = await findOrCreateConversation(db, location_id, contact_id, payload.conversation_id);
       await updateConversation(db, conversation.id, conversation.current_state as ScmState, conversation.collected_fields as ScmCollected, {
         ...conversation.context,
         escalated: true,
@@ -425,7 +468,7 @@ export class ConversationService {
     }
 
     /* 3. Load / create conversation */
-    let conversation = await findOrCreateConversation(db, location_id, contact_id);
+    let conversation = await findOrCreateConversation(db, location_id, contact_id, payload.conversation_id);
 
     /* 4. Escalation guard */
     const escalation = shouldEscalate(
@@ -592,20 +635,19 @@ export class ConversationService {
 
     /* 9. Record processed_messages BEFORE sending reply.
           sent_at is left NULL until the send succeeds so that
-          recoverUnsentReplies() can find and re-deliver on restart. */
+          recoverUnsentReplies() can find and re-deliver on restart.
+          Store the FULL SendPayload (GhlMessagePayload + locationId) so recovery has everything it needs. */
     const channel = mapMessageTypeToChannel(message.type);
-    await markMessageProcessed(db, messageId, contact_id, {
-      message: replyText,
-      channel,
+    const ghlPayload = buildGhlSendPayload(channel, contact_id, payload.conversation_id, replyText);
+    const sendPayload: import("@romea/bridge-db").SendPayload = {
+      ...ghlPayload,
       locationId: location_id,
-    });
+    };
+    await markMessageProcessed(db, messageId, contact_id, sendPayload);
 
     /* 10. Send reply */
     try {
-      await ghl.sendMessage(location_id, contact_id, {
-        message: replyText,
-        channel,
-      });
+      await ghl.sendMessage(location_id, contact_id, sendPayload);
       /* Mark as sent on success */
       await markMessageSent(db, messageId);
     } catch (err) {
@@ -675,10 +717,10 @@ export class ConversationService {
     if (!alreadySent) {
       const timer = setTimeout(async () => {
         try {
-          await this.deps.ghl.sendMessage(locationId, contactId, {
-            message: sanitizeOutput(pickHoldingTemplate()),
-            channel: "sms",
-          });
+          await this.deps.ghl.sendMessage(locationId, contactId,
+            buildGhlSendPayload("sms", contactId, conversation.ghl_conversation_id ?? undefined,
+              sanitizeOutput(pickHoldingTemplate()))
+          );
         } catch (e) {
           process.stderr.write("[conversation-service] holding message failed: " + String(e) + "\n");
         }
@@ -795,10 +837,10 @@ export class ConversationService {
     if (!alreadySent) {
       const timer = setTimeout(async () => {
         try {
-          await this.deps.ghl.sendMessage(locationId, contactId, {
-            message: sanitizeOutput(pickHoldingTemplate()),
-            channel: "sms",
-          });
+          await this.deps.ghl.sendMessage(locationId, contactId,
+            buildGhlSendPayload("sms", contactId, conversation.ghl_conversation_id ?? undefined,
+              sanitizeOutput(pickHoldingTemplate()))
+          );
         } catch (e) {
           process.stderr.write("[conversation-service] holding message failed: " + String(e) + "\n");
         }
@@ -939,11 +981,10 @@ export class ConversationService {
 
     /* Send escalation notice */
     try {
-      await ghl.sendMessage(locationId, contactId, {
-        message:
-          "I have passed this to a human coordinator who will be in touch shortly.",
-        channel: "sms",
-      });
+      await ghl.sendMessage(locationId, contactId,
+        buildGhlSendPayload("sms", contactId, conversation.ghl_conversation_id ?? undefined,
+          "I have passed this to a human coordinator who will be in touch shortly.")
+      );
     } catch (e) {
       process.stderr.write("[conversation-service] escalation send failed: " + String(e) + "\n");
     }

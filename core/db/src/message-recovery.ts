@@ -5,9 +5,9 @@ import type { Db } from "./types.js";
 /*  Used by both conversation-service and payment-service.              */
 /* ------------------------------------------------------------------ */
 
-export interface SendPayload {
-  message: string;
-  channel: string;
+import type { GhlMessagePayload } from "@romea/ghl-client";
+
+export interface SendPayload extends GhlMessagePayload {
   locationId: string;
 }
 
@@ -79,7 +79,7 @@ export async function incrementSendAttempts(
  */
 export async function recoverUnsentReplies(
   db: Db,
-  sendMessage: (locationId: string, contactId: string, payload: { message: string; channel: string }) => Promise<unknown>,
+  sendMessage: (locationId: string, contactId: string, payload: GhlMessagePayload) => Promise<unknown>,
   reprocessInbound?: (rawPayload: unknown) => Promise<unknown>,
 ): Promise<void> {
   const result = await db.query<RecoveryRow>(

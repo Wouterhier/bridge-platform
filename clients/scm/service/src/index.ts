@@ -76,7 +76,7 @@ const service = new ConversationService({
 await recoverUnsentReplies(
   db,
   (locationId, contactId, payload) =>
-    ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+    ghl.sendMessage(locationId, contactId, payload),
   (rawPayload) => service.handleInbound(rawPayload),  // re-process state-A rows
 );
 

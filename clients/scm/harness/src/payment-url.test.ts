@@ -13,10 +13,10 @@ import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { ConversationService } from "../../service/src/conversation-service.js";
 import { sanitizeOutput } from "../../flow/src/generate.js";
-import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
 import type { ModelRouter } from "@romea/model-router";
+import { createMockGhlClient } from "./mocks/ghl-mock.js";
 
 config({ path: resolve(process.cwd(), "clients/scm/.env") });
 
@@ -25,19 +25,7 @@ const basePayload = JSON.parse(readFileSync(inboundFixturePath, "utf-8"));
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "";
 
-function createMockGhlClient(): ReturnType<typeof createGhlClient> {
-  return {
-    getContact: vi.fn(async () => ({ id: "c1" })),
-    searchContacts: vi.fn(async () => []),
-    createContact: vi.fn(async () => ({ id: "c1" })),
-    updateContact: vi.fn(async () => ({ id: "c1" })),
-    sendMessage: vi.fn(async () => ({})),
-    getPipelineOpportunities: vi.fn(async () => []),
-    createOpportunity: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStage: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStageSafe: vi.fn(async () => ({ id: "opp-1" })),
-  } as unknown as ReturnType<typeof createGhlClient>;
-}
+
 
 function createMockAcuityClient(): ReturnType<typeof createAcuityClient> {
   return {

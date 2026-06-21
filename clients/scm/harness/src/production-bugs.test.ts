@@ -17,6 +17,7 @@ import { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
 import type { ModelRouter } from "@romea/model-router";
+import { createMockGhlClient } from "./mocks/ghl-mock.js";
 import { createHmac } from "node:crypto";
 import Stripe from "stripe";
 import { onPaymentConfirmed } from "../../payment-service/src/payment-processor.js";
@@ -37,21 +38,7 @@ function makeStripeSignature(payload: string, secret: string, timestamp?: number
   return `t=${t},v1=${signature}`;
 }
 
-function createMockGhlClient(): ReturnType<typeof createGhlClient> {
-  return {
-    getContact: vi.fn(async () => ({ id: "c1" })),
-    searchContacts: vi.fn(async () => []),
-    createContact: vi.fn(async () => ({ id: "c1" })),
-    updateContact: vi.fn(async () => ({ id: "c1" })),
-    addContactTags: vi.fn(async () => ({ id: "c1" })),
-    removeContactTags: vi.fn(async () => ({ id: "c1" })),
-    sendMessage: vi.fn(async () => ({})),
-    getPipelineOpportunities: vi.fn(async () => []),
-    createOpportunity: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStage: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStageSafe: vi.fn(async () => ({ id: "opp-1" })),
-  } as unknown as ReturnType<typeof createGhlClient>;
-}
+
 
 function createMockAcuityClient(
   overrides: { appointment?: { id: number }; delayMs?: number } = {},
@@ -389,7 +376,7 @@ describe("production bugs — consolidated regression", () => {
 
     /* Simulate restart: call recoverUnsentReplies */
     await recoverUnsentReplies(db, (locationId: string, contactId: string, payload: unknown) =>
-      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+      ghl.sendMessage(locationId, contactId, payload as { type: "SMS" | "Live_Chat" | "WhatsApp" | "Email"; message: string; contactId?: string; conversationId?: string }),
     );
 
     /* Assert ghl.sendMessage was called again */
@@ -526,7 +513,7 @@ describe("production bugs — consolidated regression", () => {
 
     /* Simulate payment-service restart: recover unsent replies */
     await recoverUnsentReplies(db, (locationId: string, contactId: string, payload: unknown) =>
-      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+      ghl.sendMessage(locationId, contactId, payload as { type: "SMS" | "Live_Chat" | "WhatsApp" | "Email"; message: string; contactId?: string; conversationId?: string }),
     );
 
     /* Assert ghlClient.sendMessage called again with confirmation */

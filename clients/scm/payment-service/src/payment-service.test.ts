@@ -17,6 +17,7 @@ import type { createAcuityClient } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
 import type { ModelRouter } from "@romea/model-router";
 import { recoverUnsentReplies } from "@romea/bridge-db";
+import { createMockGhlClient } from "../../harness/src/mocks/ghl-mock.js";
 import { createHmac } from "node:crypto";
 import Stripe from "stripe";
 
@@ -37,21 +38,7 @@ function makeStripeSignature(
   return `t=${t},v1=${signature}`;
 }
 
-function createMockGhlClient(): ReturnType<typeof createGhlClient> {
-  return {
-    getContact: vi.fn(async () => ({ id: "c1" })),
-    searchContacts: vi.fn(async () => []),
-    createContact: vi.fn(async () => ({ id: "c1" })),
-    updateContact: vi.fn(async () => ({ id: "c1" })),
-    addContactTags: vi.fn(async () => ({ id: "c1" })),
-    removeContactTags: vi.fn(async () => ({ id: "c1" })),
-    sendMessage: vi.fn(async () => ({})),
-    getPipelineOpportunities: vi.fn(async () => []),
-    createOpportunity: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStage: vi.fn(async () => ({ id: "opp-1" })),
-    updateOpportunityStageSafe: vi.fn(async () => ({ id: "opp-1" })),
-  } as unknown as ReturnType<typeof createGhlClient>;
-}
+
 
 function createMockAcuityClient(
   overrides: { appointment?: { id: number }; delayMs?: number } = {},
@@ -724,7 +711,7 @@ describe("payment-service", () => {
 
     /* Simulate payment-service restart: recover unsent replies */
     await recoverUnsentReplies(db, (locationId, contactId, payload) =>
-      ghl.sendMessage(locationId, contactId, payload as { message: string; channel: "sms" | "live_chat" | "whatsapp" | "email" }),
+      ghl.sendMessage(locationId, contactId, payload),
     );
 
     /* Assert ghlClient.sendMessage called again with confirmation */

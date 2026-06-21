@@ -23,7 +23,7 @@ describe("shadow isolation — client factories never read env vars", () => {
       vi.stubGlobal("fetch", fetchSpy);
 
       const ghl = createGhlClient({ token: "test-pit" });
-      await ghl.sendMessage("loc1", "c1", { message: "hello", channel: "sms" });
+      await ghl.sendMessage("loc1", "c1", { type: "SMS", contactId: "c1", message: "hello" });
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const url = String((fetchSpy.mock.calls[0] as unknown[])[0]);
@@ -40,8 +40,9 @@ describe("shadow isolation — client factories never read env vars", () => {
 
       const ghl = createShadowGhlClient({ token: "test-pit" });
       const result = await ghl.sendMessage("loc1", "c1", {
+        type: "SMS",
+        contactId: "c1",
         message: "hello",
-        channel: "sms",
       });
 
       expect(fetchSpy).not.toHaveBeenCalled();

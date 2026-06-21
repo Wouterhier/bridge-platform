@@ -83,15 +83,18 @@ describe("ghl-client", () => {
     expect(contact.id).toBe("c-new");
   });
 
-  it("sendMessage sends via correct channel", async () => {
+  it("sendMessage sends via correct type", async () => {
     const client = makeClient();
-    mockFetch((input) => {
+    let body: unknown;
+    mockFetch((input, init) => {
       expect(getUrl(input)).toContain("/conversations/messages");
+      body = init?.body ? JSON.parse(init.body as string) : null;
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     });
 
-    const result = await client.sendMessage("loc1", "c1", { message: "hello", channel: "sms" });
+    const result = await client.sendMessage("loc1", "c1", { type: "SMS", contactId: "c1", message: "hello" });
     expect(result).toEqual({ success: true });
+    expect(body).toEqual({ type: "SMS", contactId: "c1", message: "hello" });
   });
 
   it("getPipelineOpportunities returns opportunities", async () => {
