@@ -14,6 +14,7 @@ import { getFallbackMessage } from "@romea/scm-flow";
 import { shouldEscalate } from "@romea/scm-flow";
 import { getService, isPaidService } from "@romea/scm-flow";
 import { validatePhone, validateEmail } from "@romea/scm-flow";
+import { gateApiCall } from "@romea/scm-flow";
 import { sanitizeOutput } from "@romea/scm-flow";
 import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
@@ -1054,33 +1055,65 @@ export class ConversationService {
         };
       } catch (err) {
         clearTimeout(timer);
-        throw err;
+        return this.diagnoseStripeError(err, collected);
       }
     }
 
-    const session = await checkoutPromise;
-    await db.query(
-      `INSERT INTO payment_sessions
-       (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        session.id,
-        session.status ?? "open",
-        slotIso,
-        String(service.acuityTypeId),
-        contactId,
-        conversation.id,
-        `checkout-${conversation.id}-${slotIso}`,
-        JSON.stringify(collected),
-      ],
-    );
+    try {
+      const session = await checkoutPromise;
+      await db.query(
+        `INSERT INTO payment_sessions
+         (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          session.id,
+          session.status ?? "open",
+          slotIso,
+          String(service.acuityTypeId),
+          contactId,
+          conversation.id,
+          `checkout-${conversation.id}-${slotIso}`,
+          JSON.stringify(collected),
+        ],
+      );
+      return {
+        state: "AWAITING_PAYMENT",
+        collected: {
+          ...collected,
+          _paymentLink: session.url,
+          _stripeSessionId: session.id,
+        },
+      };
+    } catch (err) {
+      return this.diagnoseStripeError(err, collected);
+    }
+  }
+
+  private diagnoseStripeError(
+    err: unknown,
+    collected: CollectedWithExtras,
+  ): { state: ScmState; collected: CollectedWithExtras } {
+    const errMsg = String(err).toLowerCase();
+
+    // Fatal Stripe errors (config, auth) — escalate
+    if (
+      errMsg.includes("api key") ||
+      errMsg.includes("authentication") ||
+      errMsg.includes("unauthorized") ||
+      errMsg.includes("no such price") ||
+      errMsg.includes("invalid") && errMsg.includes("currency")
+    ) {
+      return {
+        state: "HUMAN_TOUCH",
+        collected: { ...collected, _escalationReason: "stripe_config_error" },
+      };
+    }
+
+    // Transient/network errors — already retried by Stripe client;
+    // if still failing, escalate rather than loop forever.
     return {
-      state: "AWAITING_PAYMENT",
-      collected: {
-        ...collected,
-        _paymentLink: session.url,
-        _stripeSessionId: session.id,
-      },
+      state: "HUMAN_TOUCH",
+      collected: { ...collected, _escalationReason: "stripe_checkout_failed" },
     };
   }
 
@@ -1122,26 +1155,98 @@ export class ConversationService {
       currentMedications: collected.medications,
     };
 
-    const appointment = await acuity.createAppointment({
-      appointmentTypeID: service.acuityTypeId,
-      datetime: slotIso,
-      firstName,
-      lastName,
-      email: collected.email ?? "",
-      phone: collected.phone,
-      fields: mapIntakeFields(
-        service.key ?? "",
-        collectedFields as Parameters<typeof mapIntakeFields>[1],
-      ),
-      idempotencyKey: `scm-booking-${conversation.id}-${slotIso}`,
-    });
+    try {
+      const appointment = await acuity.createAppointment({
+        appointmentTypeID: service.acuityTypeId,
+        datetime: slotIso,
+        firstName,
+        lastName,
+        email: collected.email ?? "",
+        phone: collected.phone,
+        fields: mapIntakeFields(
+          service.key ?? "",
+          collectedFields as Parameters<typeof mapIntakeFields>[1],
+        ),
+        idempotencyKey: `scm-booking-${conversation.id}-${slotIso}`,
+      });
 
+      return {
+        state: "CONFIRMED",
+        collected: {
+          ...collected,
+          _acuityAppointmentId: String(appointment.id),
+        },
+      };
+    } catch (err) {
+      return this.diagnoseAcuityError(err, collected, service.acuityTypeId);
+    }
+  }
+
+  private diagnoseAcuityError(
+    err: unknown,
+    collected: CollectedWithExtras,
+    appointmentTypeId: number,
+  ): { state: ScmState; collected: CollectedWithExtras } {
+    const errMsg = String(err).toLowerCase();
+    const errData = (err as Record<string, unknown>)?.data;
+    const dataStr = typeof errData === "string" ? errData.toLowerCase() : JSON.stringify(errData).toLowerCase();
+    const combined = `${errMsg} ${dataStr}`;
+
+    // Config/auth errors — escalate immediately
+    if (
+      combined.includes("unauthorized") ||
+      combined.includes("authentication") ||
+      combined.includes("invalid api") ||
+      combined.includes("wrong credentials") ||
+      combined.includes("not found") && combined.includes("appointment type")
+    ) {
+      return {
+        state: "HUMAN_TOUCH",
+        collected: { ...collected, _escalationReason: "acuity_config_error" },
+      };
+    }
+
+    // Field-level errors — loop back to COLLECTING with the bad field cleared
+    const missingFields: string[] = [];
+    const clearedCollected = { ...collected };
+
+    if (combined.includes("date of birth") || combined.includes("dob")) {
+      clearedCollected.dob = undefined;
+      missingFields.push("dob");
+    }
+    if (combined.includes("phone") || combined.includes("mobile")) {
+      clearedCollected.phone = undefined;
+      missingFields.push("phone");
+    }
+    if (combined.includes("email")) {
+      clearedCollected.email = undefined;
+      missingFields.push("email");
+    }
+    if (combined.includes("datetime") || combined.includes("slot") || combined.includes("time")) {
+      clearedCollected.slotIso = undefined;
+      return {
+        state: "SHOWING_SLOTS",
+        collected: clearedCollected,
+      };
+    }
+
+    if (missingFields.length > 0) {
+      // Re-compute missing fields from gate
+      const gate = gateApiCall(appointmentTypeId, clearedCollected as Record<string, unknown>);
+      return {
+        state: "COLLECTING",
+        collected: {
+          ...clearedCollected,
+          missingFields: gate.ready ? missingFields : gate.missing.map((f: { key: string }) => f.key),
+        },
+      };
+    }
+
+    // Unknown/transient errors — already has retry in Acuity client;
+    // if we got here, retries exhausted. Escalate.
     return {
-      state: "CONFIRMED",
-      collected: {
-        ...collected,
-        _acuityAppointmentId: String(appointment.id),
-      },
+      state: "HUMAN_TOUCH",
+      collected: { ...collected, _escalationReason: "acuity_booking_failed" },
     };
   }
 
