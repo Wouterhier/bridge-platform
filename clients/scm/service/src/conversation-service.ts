@@ -214,9 +214,8 @@ function stageIdForState(
   switch (state) {
     case "NEW":
       return STAGE_NEW_LEAD;
-    case "COLLECTING_NAME":
-    case "COLLECTING_PHONE":
-    case "COLLECTING_EMAIL":
+    case "ENGAGING":
+    case "COLLECTING":
     case "SELECTING_SERVICE":
     case "SHOWING_SLOTS":
     case "AWAITING_SELECTION":
@@ -350,6 +349,7 @@ interface ExtractResult {
   value: string | null;
   safetyConcern: boolean;
   concernType?: string;
+  fields?: Partial<ScmCollected>;
 }
 
 async function tryExtract(
@@ -365,16 +365,21 @@ async function tryExtract(
   const concernType = hint.concern_type as string | undefined;
 
   switch (state) {
-    case "COLLECTING_NAME":
-      if (hint.fullName) return { value: hint.fullName, safetyConcern, concernType };
-      if (hint.firstName && hint.lastName) return { value: `${hint.firstName} ${hint.lastName}`, safetyConcern, concernType };
-      return { value: null, safetyConcern, concernType };
-    case "COLLECTING_PHONE":
-      if (hint.phone) return { value: hint.phone, safetyConcern, concernType };
-      return { value: null, safetyConcern, concernType };
-    case "COLLECTING_EMAIL":
-      if (hint.email) return { value: hint.email, safetyConcern, concernType };
-      return { value: null, safetyConcern, concernType };
+    case "ENGAGING":
+    case "COLLECTING": {
+      const fields: Partial<ScmCollected> = {};
+      if (hint.fullName) {
+        fields.fullName = hint.fullName;
+      } else if (hint.firstName && hint.lastName) {
+        fields.fullName = `${hint.firstName} ${hint.lastName}`;
+      }
+      if (hint.phone) fields.phone = hint.phone;
+      if (hint.email) fields.email = hint.email;
+      if (hint.dob) fields.dobRaw = hint.dob;
+      if (hint.serviceKey) fields.serviceKey = hint.serviceKey;
+      if (hint.bookingIntent) fields.bookingIntent = true;
+      return { value: null, safetyConcern, concernType, fields };
+    }
     case "SELECTING_SERVICE":
       if (hint.serviceKey) return { value: hint.serviceKey, safetyConcern, concernType };
       return { value: null, safetyConcern, concernType };
@@ -523,6 +528,38 @@ export class ConversationService {
       return { sent: false, reason: "escalated:model_safety" };
     }
 
+    /* 5c. Merge multi-field extraction for ENGAGING / COLLECTING */
+    let preCollected: ScmCollected = { ...conversation.collected_fields };
+    if (extracted.fields) {
+      preCollected = { ...preCollected, ...extracted.fields };
+    }
+    // If a dobRaw was extracted, attempt normalization
+    if (preCollected.dobRaw && !preCollected.dob) {
+      const { normalizeDob } = await import("@romea/scm-flow");
+      const dobResult = normalizeDob(preCollected.dobRaw);
+      if (dobResult.ok) {
+        preCollected = { ...preCollected, dob: dobResult.value };
+      }
+    }
+
+    // Update missingFields for COLLECTING state
+    if (currentState === "COLLECTING" || currentState === "SELECTING_SERVICE") {
+      const { getService } = await import("@romea/scm-flow");
+      const cfg =
+        typeof preCollected.serviceKey === "string"
+          ? getService(preCollected.serviceKey)
+          : (preCollected.serviceKey as { acuityTypeId?: number } | undefined);
+      if (cfg?.acuityTypeId) {
+        const { gateApiCall } = await import("@romea/scm-flow");
+        const gate = gateApiCall(cfg.acuityTypeId, preCollected as Record<string, unknown>);
+        if (!gate.ready) {
+          preCollected = { ...preCollected, missingFields: gate.missing.map((f) => f.key) };
+        } else {
+          preCollected = { ...preCollected, missingFields: [] };
+        }
+      }
+    }
+
     const enrichedRawMessage = extracted.value ?? rawMessage;
 
     /* 6. Run state machine */
@@ -533,7 +570,7 @@ export class ConversationService {
       rawMessage: enrichedRawMessage,
       conversation: {
         currentState,
-        collected: { ...conversation.collected_fields },
+        collected: preCollected as Record<string, unknown>,
       },
       context,
     });
@@ -547,8 +584,10 @@ export class ConversationService {
       collected.fullName !== conversation.collected_fields.fullName ? "fullName"
       : collected.phone !== conversation.collected_fields.phone ? "phone"
       : collected.email !== conversation.collected_fields.email ? "email"
+      : collected.dob !== conversation.collected_fields.dob ? "dob"
       : collected.serviceKey !== conversation.collected_fields.serviceKey ? "serviceKey"
       : collected.slotIso !== conversation.collected_fields.slotIso ? "slotIso"
+      : collected.bookingIntent !== conversation.collected_fields.bookingIntent ? "bookingIntent"
       : "none";
     process.stdout.write(JSON.stringify({
       action: "state.transition",
@@ -1005,6 +1044,10 @@ export class ConversationService {
       patientName: fullName,
       email: collected.email,
       phone: collected.phone,
+      dob: collected.dob,
+      address: collected.address,
+      questionsToDiscuss: collected.questions,
+      currentMedications: collected.medications,
     };
 
     const appointment = await acuity.createAppointment({

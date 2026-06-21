@@ -190,36 +190,19 @@ function buildStateInstruction(
         "This is the very first message from the patient. Greet them warmly, let them know in one line you can help them book a consultation or answer questions, and naturally invite them to share their name so you can get started. Respond to whatever they actually said first.",
       );
       break;
-    case "COLLECTING_NAME":
-      if (errorKey) {
-        parts.push(
-          "What they gave did not look like a full name. Gently and warmly let them know you just need their first and last name so you can get them set up. Do not be stiff about it.",
-        );
-      } else {
-        parts.push(
-          "You still need their full name (first and last) to get started. Respond warmly to what they said, then invite them to share their name in a natural way. Do not demand it.",
-        );
-      }
+    case "ENGAGING":
+      parts.push(
+        "This is an open conversation. Answer the patient's questions warmly and helpfully. Build a little rapport. If they show interest in booking, guide them toward choosing a service. Do NOT fire a list of required fields at them. Keep it conversational and low-pressure.",
+      );
       break;
-    case "COLLECTING_PHONE":
+    case "COLLECTING":
       if (errorKey) {
         parts.push(
-          "The phone number did not look valid. Warmly ask for a good contact number including the country code, framed as so the clinic can reach them about their appointment.",
+          "Something they provided didn't look right. Gently and warmly let them know what you need, framed around getting them booked in. Do not be stiff about it.",
         );
       } else {
         parts.push(
-          `You now have their name${name ? ` (${name})` : ""}. Acknowledge it warmly, then ask for the best phone number to reach them, including country code, framed around helping coordinate their appointment.`,
-        );
-      }
-      break;
-    case "COLLECTING_EMAIL":
-      if (errorKey) {
-        parts.push(
-          "The email did not look valid. Warmly ask for a good email address so you can send their confirmation and details.",
-        );
-      } else {
-        parts.push(
-          "Ask for their email next, framed around sending their booking confirmation and appointment details. Keep it light and natural.",
+          "You are collecting the remaining details needed for their booking. Ask naturally, combining questions where possible. Frame everything around helping them get booked in. If they already provided some details earlier, do NOT re-ask them.",
         );
       }
       break;

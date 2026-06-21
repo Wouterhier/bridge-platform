@@ -10,8 +10,10 @@ export interface ExtractionHint {
   fullName?: string;
   phone?: string;
   email?: string;
+  dob?: string;
   serviceKey?: string;
   slotIso?: string;
+  bookingIntent?: boolean;
   safety_concern?: boolean;
   concern_type?: string;
 }
@@ -109,6 +111,68 @@ function buildSlotPrompt(
   ].join("\n");
 }
 
+function buildEngagingPrompt(
+  rawMessage: string,
+  history: HistoryMessage[],
+  collected: ScmCollected,
+): string {
+  const knownFields: string[] = [];
+  if (collected.fullName) knownFields.push(`name: ${collected.fullName}`);
+  if (collected.phone) knownFields.push(`phone: ${collected.phone}`);
+  if (collected.email) knownFields.push(`email: ${collected.email}`);
+  if (collected.dob) knownFields.push(`dob: ${collected.dob}`);
+
+  return [
+    "Analyze the patient's message and extract any information they provided.",
+    "Return ONLY a JSON object with any of these fields that are present in the message:",
+    '{"firstName": "...", "lastName": "...", "fullName": "...", "phone": "...", "email": "...", "dob": "...", "serviceKey": "...", "bookingIntent": true}',
+    "",
+    "Rules:",
+    "- bookingIntent: set to TRUE if the patient explicitly wants to book, schedule, sign up, get started, or make an appointment. Do NOT set it for casual questions or greetings.",
+    "- dob: extract any date of birth mentioned, in whatever format the patient used. Do not normalize it.",
+    "- serviceKey: if they mention a specific service (trt, ed, glp-1, roidcare, nutrition, weight management, free eligibility), extract the key.",
+    "- Only include fields that are actually present in THIS message (or clearly refer to earlier in the conversation).",
+    "- If nothing extractable, return {}.",
+    knownFields.length > 0 ? `\nAlready known: ${knownFields.join(", ")}` : "",
+    "",
+    "Conversation history:",
+    ...history.map((h) => `${h.role}: ${h.content}`),
+    "",
+    `Patient message: "${rawMessage}"`,
+  ].join("\n");
+}
+
+function buildCollectingPrompt(
+  rawMessage: string,
+  history: HistoryMessage[],
+  collected: ScmCollected,
+): string {
+  const missing = collected.missingFields ?? [];
+  const knownFields: string[] = [];
+  if (collected.fullName) knownFields.push(`name: ${collected.fullName}`);
+  if (collected.phone) knownFields.push(`phone: ${collected.phone}`);
+  if (collected.email) knownFields.push(`email: ${collected.email}`);
+  if (collected.dob) knownFields.push(`dob: ${collected.dob}`);
+
+  return [
+    "The patient is in the process of booking a consultation. Extract any missing details they provide in their message.",
+    "Return ONLY a JSON object with any of these fields that are present in the message:",
+    '{"firstName": "...", "lastName": "...", "fullName": "...", "phone": "...", "email": "...", "dob": "...", "address": "...", "medications": "...", "medicalHistory": "...", "questions": "..."}',
+    "",
+    "Rules:",
+    "- dob: extract any date of birth mentioned, in whatever format. Do not normalize.",
+    "- Only include fields that are actually present in THIS message (or clearly refer to earlier in the conversation).",
+    "- If nothing extractable, return {}.",
+    `\nStill needed: ${missing.join(", ") || "(none — all collected)"}`,
+    knownFields.length > 0 ? `\nAlready known: ${knownFields.join(", ")}` : "",
+    "",
+    "Conversation history:",
+    ...history.map((h) => `${h.role}: ${h.content}`),
+    "",
+    `Patient message: "${rawMessage}"`,
+  ].join("\n");
+}
+
 function buildPrompt(
   state: ScmState,
   rawMessage: string,
@@ -116,12 +180,10 @@ function buildPrompt(
   history: HistoryMessage[],
 ): string | null {
   switch (state) {
-    case "COLLECTING_NAME":
-      return buildNamePrompt(rawMessage, history);
-    case "COLLECTING_PHONE":
-      return buildPhonePrompt(rawMessage, history);
-    case "COLLECTING_EMAIL":
-      return buildEmailPrompt(rawMessage, history);
+    case "ENGAGING":
+      return buildEngagingPrompt(rawMessage, history, collected);
+    case "COLLECTING":
+      return buildCollectingPrompt(rawMessage, history, collected);
     case "SELECTING_SERVICE":
       return buildServicePrompt(rawMessage, history);
     case "AWAITING_SELECTION":
@@ -329,21 +391,21 @@ export async function extract(
   const hint = (parsed ?? {}) as ExtractionHint;
 
   // ── Post-processing: regex fallbacks ────────────────────────────────────
-  if (state === "COLLECTING_EMAIL" && !hint.email) {
+  if ((state === "ENGAGING" || state === "COLLECTING") && !hint.email) {
     const fallback = regexExtractEmail(rawMessage);
     if (fallback) hint.email = fallback;
   }
-  if (state === "COLLECTING_PHONE" && !hint.phone) {
+  if ((state === "ENGAGING" || state === "COLLECTING") && !hint.phone) {
     const fallback = regexExtractPhone(rawMessage);
     if (fallback) hint.phone = fallback;
   }
-  if (state === "COLLECTING_NAME" && !hint.firstName && !hint.fullName) {
+  if ((state === "ENGAGING" || state === "COLLECTING") && !hint.firstName && !hint.fullName) {
     const fallback = regexExtractName(rawMessage);
     if (fallback) Object.assign(hint, fallback);
   }
 
   // ── Post-processing: service key resolution ─────────────────────────────
-  if (state === "SELECTING_SERVICE" && hint.serviceKey) {
+  if ((state === "ENGAGING" || state === "SELECTING_SERVICE") && hint.serviceKey) {
     const resolved = resolveServiceKey(hint.serviceKey);
     if (resolved) {
       hint.serviceKey = resolved;

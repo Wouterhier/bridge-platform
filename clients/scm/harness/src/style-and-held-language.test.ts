@@ -45,9 +45,8 @@ function assertHeldLanguage(text: string): string[] {
 
 const testStates: Array<{ state: ScmState; collected: ScmCollected; errorKey?: string }> = [
   { state: "NEW", collected: {} },
-  { state: "COLLECTING_NAME", collected: {} },
-  { state: "COLLECTING_PHONE", collected: { fullName: "John Smith" } },
-  { state: "COLLECTING_EMAIL", collected: { fullName: "John Smith", phone: "+64210000000" } },
+  { state: "ENGAGING", collected: {} },
+  { state: "COLLECTING", collected: { fullName: "John Smith", phone: "+64210000000", email: "john@example.com", missingFields: ["dob"] } },
   { state: "SELECTING_SERVICE", collected: { fullName: "John Smith", phone: "+64210000000", email: "john@example.com" } },
   { state: "SHOWING_SLOTS", collected: { fullName: "John Smith", serviceKey: "trt_initial" } },
   { state: "AWAITING_SELECTION", collected: { fullName: "John Smith", serviceKey: "trt_initial", slotMenu: [{ iso: "2026-06-20T09:00:00+12:00" }] } },

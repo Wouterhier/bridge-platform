@@ -21,9 +21,9 @@ export function createMockGhlClient(): ReturnType<typeof createGhlClient> {
       if (!payload.type) throw new Error("GHL mock: type is required");
       if (!["SMS", "Live_Chat", "WhatsApp", "Email"].includes(payload.type))
         throw new Error(`GHL mock: invalid type "${payload.type}"`);
-      if (payload.type === "Live_Chat" && !payload.conversationId)
-        throw new Error("GHL mock: Live_Chat requires conversationId");
-      if (payload.type !== "Live_Chat" && !payload.contactId)
+      // Real GHL accepts contactId-only for all channels including Live_Chat;
+      // conversationId is optional (system resolves it internally).
+      if (!payload.contactId)
         throw new Error(`GHL mock: ${payload.type} requires contactId`);
       // REJECT old channel field
       if ((payload as unknown as Record<string, unknown>).channel !== undefined)

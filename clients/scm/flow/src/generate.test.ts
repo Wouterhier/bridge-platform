@@ -42,9 +42,8 @@ function lintMessage(text: string): string[] {
 
 const testStates: Array<{ state: ScmState; collected: ScmCollected; errorKey?: string }> = [
   { state: "NEW", collected: {} },
-  { state: "COLLECTING_NAME", collected: {} },
-  { state: "COLLECTING_PHONE", collected: { fullName: "John Smith" } },
-  { state: "COLLECTING_EMAIL", collected: { fullName: "John Smith", phone: "+64210000000" } },
+  { state: "ENGAGING", collected: {} },
+  { state: "COLLECTING", collected: { fullName: "John Smith", phone: "+64210000000", email: "john@example.com", missingFields: ["dob"] } },
   { state: "SELECTING_SERVICE", collected: { fullName: "John Smith", phone: "+64210000000", email: "john@example.com" } },
   { state: "SHOWING_SLOTS", collected: { fullName: "John Smith", serviceKey: "trt_initial" } },
   { state: "AWAITING_SELECTION", collected: { fullName: "John Smith", serviceKey: "trt_initial", slotMenu: [{ iso: "2026-06-20T09:00:00+12:00" }] } },
@@ -82,14 +81,14 @@ describe("generate() fallback path", () => {
       } as ReturnType<typeof loadConfig>);
 
       const text = await generate(
-        "COLLECTING_NAME",
+        "ENGAGING",
         {},
         [],
         undefined,
         undefined,
         { router: brokenRouter },
       );
-      expect(text).toContain("full name");
+      expect(text).toContain("Welcome");
     },
     longTimeout,
   );
@@ -274,7 +273,7 @@ describe("generate() compact history", () => {
       },
     ];
 
-    const text = await generate("COLLECTING_NAME", { fullName: "John" }, history, undefined, undefined, { router });
+    const text = await generate("ENGAGING", { fullName: "John" }, history, undefined, undefined, { router });
     expect(typeof text).toBe("string");
     expect(text.length).toBeGreaterThan(0);
   });
@@ -285,7 +284,7 @@ describe("generate() compact history", () => {
       { role: "user" as const, content: '{"raw": "json"}' },
     ];
 
-    const text = await generate("COLLECTING_NAME", {}, badHistory, undefined, undefined, { router });
+    const text = await generate("ENGAGING", {}, badHistory, undefined, undefined, { router });
     expect(typeof text).toBe("string");
     // The test proves history is passed through compactHistory which stringifies as role: content
     // rather than embedding raw JSON objects in the prompt.

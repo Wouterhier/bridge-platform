@@ -17,46 +17,43 @@ describe("SCM flow happy path", () => {
       conversation: { currentState: "NEW", collected: {} },
       context: emptyContext,
     });
-    expect(afterWelcome.state).toBe("COLLECTING_NAME");
+    expect(afterWelcome.state).toBe("ENGAGING");
 
-    const afterName = await engine.process({
-      rawMessage: "John Smith",
-      conversation: { currentState: afterWelcome.state, collected: afterWelcome.collected },
+    const afterEngaging = await engine.process({
+      rawMessage: "I want to book a free eligibility check",
+      conversation: { currentState: afterWelcome.state, collected: { ...afterWelcome.collected, bookingIntent: true } },
       context: emptyContext,
     });
-    expect(afterName.state).toBe("COLLECTING_PHONE");
-    expect(afterName.collected.fullName).toBe("John Smith");
-
-    const afterPhone = await engine.process({
-      rawMessage: "+64 21 000 0000",
-      conversation: { currentState: afterName.state, collected: afterName.collected },
-      context: emptyContext,
-    });
-    expect(afterPhone.state).toBe("COLLECTING_EMAIL");
-    expect(afterPhone.collected.phone).toBe("+64210000000");
-
-    const afterEmail = await engine.process({
-      rawMessage: "john.smith@selfcaremen.co.nz",
-      conversation: { currentState: afterPhone.state, collected: afterPhone.collected },
-      context: emptyContext,
-    });
-    expect(afterEmail.state).toBe("SELECTING_SERVICE");
-    expect(afterEmail.collected.email).toBe("john.smith@selfcaremen.co.nz");
+    expect(afterEngaging.state).toBe("SELECTING_SERVICE");
 
     const afterService = await engine.process({
       rawMessage: "free_eligibility",
-      conversation: { currentState: afterEmail.state, collected: afterEmail.collected },
+      conversation: { currentState: afterEngaging.state, collected: afterEngaging.collected },
       context: emptyContext,
     });
-    expect(afterService.state).toBe("SHOWING_SLOTS");
-    expect(afterService.collected.serviceKey).toMatchObject({
-      key: "free_eligibility",
-      paid: false,
+    expect(afterService.state).toBe("COLLECTING");
+
+    // COLLECTING with all mandatory fields present → SHOWING_SLOTS
+    const afterCollecting = await engine.process({
+      rawMessage: "ok",
+      conversation: {
+        currentState: afterService.state,
+        collected: {
+          ...afterService.collected,
+          fullName: "John Smith",
+          phone: "+64210000000",
+          email: "john.smith@selfcaremen.co.nz",
+          dob: "07/26/1995",
+          missingFields: [],
+        },
+      },
+      context: emptyContext,
     });
+    expect(afterCollecting.state).toBe("SHOWING_SLOTS");
 
     const afterShowSlots = await engine.process({
       rawMessage: "ok",
-      conversation: { currentState: afterService.state, collected: afterService.collected },
+      conversation: { currentState: afterCollecting.state, collected: afterCollecting.collected },
       context: emptyContext,
     });
     expect(afterShowSlots.state).toBe("AWAITING_SELECTION");
@@ -88,8 +85,10 @@ describe("SCM flow happy path", () => {
       fullName: "John Smith",
       phone: "+64210000000",
       email: "john.smith@selfcaremen.co.nz",
+      dob: "07/26/1995",
       serviceKey: "trt_initial",
       slotMenu: [{ iso: "2026-06-20T10:00:00+12:00" }],
+      missingFields: [],
     };
 
     const afterSlot = await engine.process({
@@ -124,55 +123,58 @@ describe("SCM flow happy path", () => {
 });
 
 describe("SCM flow failure paths", () => {
-  it("stays in COLLECTING_EMAIL on invalid email", async () => {
+  it("stays in ENGAGING without booking intent", async () => {
     const engine = makeEngine();
 
     const result = await engine.process({
-      rawMessage: "not-an-email",
+      rawMessage: "Just looking around",
+      conversation: { currentState: "ENGAGING", collected: {} },
+      context: emptyContext,
+    });
+
+    expect(result.state).toBe("ENGAGING");
+    expect(result.rePrompt).toBe(false);
+  });
+
+  it("stays in COLLECTING when mandatory fields are missing", async () => {
+    const engine = makeEngine();
+
+    const result = await engine.process({
+      rawMessage: "I want to book",
       conversation: {
-        currentState: "COLLECTING_EMAIL",
-        collected: { fullName: "John Smith", phone: "+64210000000" },
+        currentState: "COLLECTING",
+        collected: {
+          serviceKey: "free_eligibility",
+          fullName: "John Smith",
+          // phone, email, dob missing
+          missingFields: ["phone", "email", "dob"],
+        },
       },
       context: emptyContext,
     });
 
-    expect(result.state).toBe("COLLECTING_EMAIL");
-    expect(result.rePrompt).toBe(true);
-    expect(result.validationError).toBe("invalid_email");
-    expect(result.collected).toEqual({
-      fullName: "John Smith",
-      phone: "+64210000000",
-    });
+    expect(result.state).toBe("COLLECTING");
+    expect(result.rePrompt).toBe(false);
   });
 
-  it("stays in COLLECTING_NAME on placeholder name", async () => {
+  it("cannot skip from COLLECTING to CONFIRMED", async () => {
     const engine = makeEngine();
 
     const result = await engine.process({
-      rawMessage: "Guest Visitor",
-      conversation: { currentState: "COLLECTING_NAME", collected: {} },
-      context: emptyContext,
-    });
-
-    expect(result.state).toBe("COLLECTING_NAME");
-    expect(result.rePrompt).toBe(true);
-    expect(result.validationError).toBe("placeholder_name");
-  });
-
-  it("cannot skip from COLLECTING_EMAIL to CONFIRMED", async () => {
-    const engine = makeEngine();
-
-    const result = await engine.process({
-      rawMessage: "I want to book free_eligibility now",
+      rawMessage: "confirm my booking now",
       conversation: {
-        currentState: "COLLECTING_EMAIL",
-        collected: { fullName: "John Smith", phone: "+64210000000" },
+        currentState: "COLLECTING",
+        collected: {
+          fullName: "John Smith",
+          phone: "+64210000000",
+          serviceKey: "free_eligibility",
+          missingFields: ["email", "dob"],
+        },
       },
       context: emptyContext,
     });
 
-    expect(result.state).toBe("COLLECTING_EMAIL");
-    expect(result.rePrompt).toBe(true);
+    expect(result.state).toBe("COLLECTING");
   });
 
   it("stays in AWAITING_PAYMENT until payment webhook context arrives", async () => {
@@ -182,6 +184,7 @@ describe("SCM flow failure paths", () => {
       fullName: "John Smith",
       phone: "+64210000000",
       email: "john.smith@selfcaremen.co.nz",
+      dob: "07/26/1995",
       serviceKey: "trt_initial",
       slotIso: "2026-06-20T10:00:00+12:00",
     };

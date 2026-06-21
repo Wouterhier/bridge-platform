@@ -2,15 +2,13 @@ import type { ScmState } from "./states.js";
 
 export const fallbackMessages: Record<ScmState, string> = {
   NEW:
-    "Welcome to SelfCareMen. I will help you book a consultation. Could you please tell me your full name?",
-  COLLECTING_NAME:
-    "Thanks for getting in touch. To get started, could you please provide your full name?",
-  COLLECTING_PHONE:
-    "What is the best phone number to reach you on? Please include your country code, for example +64 21 000 0000.",
-  COLLECTING_EMAIL:
-    "What is your email address? We will use it to send your appointment confirmation.",
+    "Welcome to SelfCareMen. I will help you book a consultation or answer any questions you have. What brings you in today?",
+  ENGAGING:
+    "Welcome to SelfCareMen. I am here to help you with bookings or answer questions. What can I do for you?",
   SELECTING_SERVICE:
     "Which service would you like to book? You can reply with the service name, for example TRT Initial Consultation, Free Eligibility Consultation, or RoidCare+ Initial.",
+  COLLECTING:
+    "To complete your booking I just need a few more details from you. Could you share those when you have a moment?",
   SHOWING_SLOTS:
     "Here are the available appointment slots. Please let me know which one suits you best.",
   AWAITING_SELECTION:

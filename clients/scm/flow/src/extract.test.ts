@@ -19,7 +19,7 @@ describe("extract() real model accuracy", () => {
     "extracts name from 'My name is John Smith'",
     async () => {
       const hint = await extract(
-        "COLLECTING_NAME",
+        "ENGAGING",
         "My name is John Smith",
         [],
         {},
@@ -40,7 +40,7 @@ describe("extract() real model accuracy", () => {
     "extracts phone from '021 000 0000'",
     async () => {
       const hint = await extract(
-        "COLLECTING_PHONE",
+        "COLLECTING",
         "021 000 0000",
         [],
         {},
@@ -55,7 +55,7 @@ describe("extract() real model accuracy", () => {
     "extracts email from 'andrea@romea.ai'",
     async () => {
       const hint = await extract(
-        "COLLECTING_EMAIL",
+        "COLLECTING",
         "andrea@romea.ai",
         [],
         {},
@@ -110,6 +110,7 @@ describe("extract() null/escalation states", () => {
     "AWAITING_PAYMENT",
     "BOOKING_ACUITY",
     "CONFIRMED",
+    "HUMAN_TOUCH",
   ];
 
   it.each(nullStates)("returns null for state %s", async (state) => {
@@ -121,7 +122,7 @@ describe("extract() null/escalation states", () => {
     "returns null for ambiguous input after escalation",
     async () => {
       const hint = await extract(
-        "COLLECTING_NAME",
+        "ENGAGING",
         "hmm maybe",
         [],
         {},
@@ -146,7 +147,7 @@ describe("extract() Kimi fallback", () => {
       } as ReturnType<typeof loadConfig>);
 
       const hint = await extract(
-        "COLLECTING_NAME",
+        "ENGAGING",
         "My name is Alice Johnson",
         [],
         {},
@@ -243,7 +244,7 @@ describe("extract() regex fallbacks", () => {
     } as ReturnType<typeof loadConfig>);
 
     const hint = await extract(
-      "COLLECTING_EMAIL",
+      "COLLECTING",
       "You can reach me at john.doe@romea.ai thanks",
       [],
       {},
@@ -262,7 +263,7 @@ describe("extract() regex fallbacks", () => {
     } as ReturnType<typeof loadConfig>);
 
     const hint = await extract(
-      "COLLECTING_PHONE",
+      "COLLECTING",
       "My number is +64 21 123 4567",
       [],
       {},
@@ -282,7 +283,7 @@ describe("extract() regex fallbacks", () => {
     } as ReturnType<typeof loadConfig>);
 
     const hint = await extract(
-      "COLLECTING_NAME",
+      "ENGAGING",
       "My name is Sarah Connor",
       [],
       {},

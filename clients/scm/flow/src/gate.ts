@@ -102,15 +102,15 @@ export function buildValidatedPayload(
   // Base fields — always normalize
   if (collected.fullName !== undefined && collected.fullName !== "") {
     const nameResult = validateName(String(collected.fullName));
-    if (nameResult.ok) payload.fullName = nameResult.value;
+    if (nameResult.ok && nameResult.value) payload.fullName = nameResult.value;
   }
   if (collected.phone !== undefined && collected.phone !== "") {
     const phoneResult = validatePhone(String(collected.phone));
-    if (phoneResult.ok) payload.phone = phoneResult.value;
+    if (phoneResult.ok && phoneResult.value) payload.phone = phoneResult.value;
   }
   if (collected.email !== undefined && collected.email !== "") {
     const emailResult = validateEmail(String(collected.email));
-    if (emailResult.ok) payload.email = emailResult.value;
+    if (emailResult.ok && emailResult.value) payload.email = emailResult.value;
   }
 
   // Custom fields from spec
