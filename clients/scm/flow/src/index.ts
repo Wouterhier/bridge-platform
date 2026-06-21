@@ -2,6 +2,7 @@ export * from "./services.js";
 export * from "./validators.js";
 export * from "./states.js";
 export * from "./field-spec.js";
+export * from "./gate.js";
 export * from "./escalation-guard.js";
 export * from "./extract.js";
 export * from "./generate.js";

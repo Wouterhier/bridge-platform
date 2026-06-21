@@ -40,8 +40,45 @@ export function normalizeDob(raw: string): DobResult {
     return { ok: true, value: formatDate(month, day, year) };
   }
 
-  // Try DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-  const dmyMatch = value.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  // Try slash-separated dates first: MM/DD/YYYY vs DD/MM/YYYY
+  const slashMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slashMatch) {
+    const a = parseInt(slashMatch[1], 10);
+    const b = parseInt(slashMatch[2], 10);
+    let year = parseInt(slashMatch[3], 10);
+    if (year < 100) year += year < 30 ? 2000 : 1900;
+
+    if (b > 12) {
+      // b cannot be a month → must be MM/DD/YYYY
+      const result = validateDateParts(year, a, b);
+      if (!result.ok) return result;
+      return { ok: true, value: formatDate(a, b, year) };
+    }
+
+    if (a > 12) {
+      // a cannot be a month → must be DD/MM/YYYY
+      const result = validateDateParts(year, b, a);
+      if (!result.ok) return result;
+      return { ok: true, value: formatDate(b, a, year) };
+    }
+
+    // Both a and b ≤ 12 — ambiguous
+    if (a !== b) {
+      return {
+        ok: false,
+        ambiguous: true,
+        hint: `${a}th of ${monthName(b)} or ${b}th of ${monthName(a)}?`,
+      };
+    }
+
+    // a === b, so either interpretation is the same
+    const result = validateDateParts(year, a, b);
+    if (!result.ok) return result;
+    return { ok: true, value: formatDate(a, b, year) };
+  }
+
+  // Try DD.MM.YYYY or DD-MM-YYYY (dot or dash — unambiguously DMY)
+  const dmyMatch = value.match(/^(\d{1,2})[\.-](\d{1,2})[\.-](\d{2,4})$/);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1], 10);
     const month = parseInt(dmyMatch[2], 10);
@@ -86,34 +123,6 @@ export function normalizeDob(raw: string): DobResult {
     let year = parseInt(dayMonthYearMatch[3], 10);
     if (year < 100) year += year < 30 ? 2000 : 1900;
     if (month === 0) return { ok: false, error: "invalid_month" };
-    const result = validateDateParts(year, month, day);
-    if (!result.ok) return result;
-    return { ok: true, value: formatDate(month, day, year) };
-  }
-
-  // Try MM/DD/YYYY (American format) — unambiguous if first part > 12
-  const mdyMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (mdyMatch) {
-    const month = parseInt(mdyMatch[1], 10);
-    const day = parseInt(mdyMatch[2], 10);
-    let year = parseInt(mdyMatch[3], 10);
-    if (year < 100) year += year < 30 ? 2000 : 1900;
-
-    if (month > 12) {
-      // Actually this is probably DD/MM
-      const result = validateDateParts(year, month, day);
-      if (!result.ok) return result;
-      return { ok: true, value: formatDate(day, month, year) };
-    }
-
-    if (day <= 12 && month <= 12 && day !== month) {
-      return {
-        ok: false,
-        ambiguous: true,
-        hint: `${month}th of ${monthName(day)} or ${day}th of ${monthName(month)}?`,
-      };
-    }
-
     const result = validateDateParts(year, month, day);
     if (!result.ok) return result;
     return { ok: true, value: formatDate(month, day, year) };
