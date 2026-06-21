@@ -335,21 +335,11 @@ function mapMessageTypeToChannel(type: string): "sms" | "live_chat" | "whatsapp"
 function buildGhlSendPayload(
   channel: "sms" | "live_chat" | "whatsapp" | "email",
   contactId: string,
-  conversationId: string | undefined,
+  _conversationId: string | undefined,
   message: string,
 ): import("@romea/ghl-client").GhlMessagePayload {
-  if (channel === "live_chat") {
-    if (!conversationId) {
-      process.stderr.write(
-        `[conversation-service] WARN: live_chat reply missing conversationId for contact ${contactId}, falling back to SMS\n`
-      );
-      return { type: "SMS", contactId, message };
-    }
-    return { type: "Live_Chat", conversationId, message };
-  }
-  if (channel === "whatsapp") return { type: "WhatsApp", contactId, message };
-  if (channel === "email") return { type: "Email", contactId, message };
-  return { type: "SMS", contactId, message };  // default
+  const typeMap = { sms: "SMS", live_chat: "Live_Chat", whatsapp: "WhatsApp", email: "Email" } as const;
+  return { type: typeMap[channel] ?? "SMS", contactId, message };
 }
 
 /* ------------------------------------------------------------------ */
@@ -733,7 +723,7 @@ export class ConversationService {
       /* Leave sent_at NULL so recovery will retry.
          Increment attempts so we can eventually give up. */
       await incrementSendAttempts(db, messageId);
-      process.stderr.write("[conversation-service] GHL send failed: " + String(err) + "\n");
+      process.stderr.write("[conversation-service] GHL send failed: " + String(err) + " BODY: " + JSON.stringify((err as any).data) + " PAYLOAD: " + JSON.stringify(sendPayload) + "\n");
     }
 
     /* 11. Update conversation state in Postgres */

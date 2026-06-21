@@ -119,6 +119,7 @@ export function createGhlClient(config: GhlClientConfig) {
     path: string,
     body?: unknown,
     query?: Record<string, string | undefined>,
+    versionOverride?: string,
   ): Promise<T> {
     const url = new URL(path, baseUrl);
     if (query) {
@@ -129,7 +130,7 @@ export function createGhlClient(config: GhlClientConfig) {
 
     const init: RequestInit = {
       method,
-      headers: headers(),
+      headers: versionOverride ? { ...headers(), Version: versionOverride } : headers(),
     };
     if (body !== undefined) {
       init.body = JSON.stringify(body);
@@ -246,7 +247,7 @@ export function createGhlClient(config: GhlClientConfig) {
       _contactId: string,
       payload: GhlMessagePayload,
     ): Promise<unknown> {
-      return request<unknown>("POST", "/conversations/messages", payload);
+      return request<unknown>("POST", "/conversations/messages", payload, undefined, "2021-04-15");
     },
 
     async getConversationId(
