@@ -179,6 +179,7 @@ describe("payment-service", () => {
           phone: "+64210000000",
           email: "john.smith@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T09:00:00+12:00",
         }),
       ],
@@ -202,6 +203,7 @@ describe("payment-service", () => {
           phone: "+64210000000",
           email: "john.smith@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T09:00:00+12:00",
         }),
       ],
@@ -314,6 +316,7 @@ describe("payment-service", () => {
           phone: "+64210000001",
           email: "jane.doe@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T10:00:00+12:00",
         }),
       ],
@@ -337,6 +340,7 @@ describe("payment-service", () => {
           phone: "+64210000001",
           email: "jane.doe@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T10:00:00+12:00",
         }),
       ],
@@ -394,6 +398,7 @@ describe("payment-service", () => {
           phone: "+64210000002",
           email: "bob@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T11:00:00+12:00",
           _acuityAppointmentId: "55555",
           _stripeSessionId: "cs_test_paid_restart",
@@ -419,6 +424,7 @@ describe("payment-service", () => {
           phone: "+64210000002",
           email: "bob@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T11:00:00+12:00",
         }),
         "55555",
@@ -434,6 +440,7 @@ describe("payment-service", () => {
       phone: "+64210000002",
       email: "bob@selfcaremen.co.nz",
       serviceKey: "trt_initial",
+          dob: "07/26/1990",
       slotIso: "2026-06-20T11:00:00+12:00",
       _acuityAppointmentId: "55555",
       _stripeSessionId: "cs_test_paid_restart",
@@ -489,6 +496,7 @@ describe("payment-service", () => {
           phone: "+64210000003",
           email: "race@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T12:00:00+12:00",
         }),
       ],
@@ -512,6 +520,7 @@ describe("payment-service", () => {
           phone: "+64210000003",
           email: "race@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T12:00:00+12:00",
         }),
       ],
@@ -619,6 +628,7 @@ describe("payment-service", () => {
           phone: "+64210000005",
           email: "crash@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T14:00:00+12:00",
         }),
       ],
@@ -642,6 +652,7 @@ describe("payment-service", () => {
           phone: "+64210000005",
           email: "crash@selfcaremen.co.nz",
           serviceKey: "trt_initial",
+          dob: "07/26/1990",
           slotIso: "2026-06-20T14:00:00+12:00",
         }),
       ],
@@ -726,5 +737,125 @@ describe("payment-service", () => {
       [`scm-confirm-${psResult.rows[0].id}`],
     );
     expect(pmResultAfter.rows[0].sent_at).not.toBeNull();
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  Test 7 — Gate blocks paid booking when mandatory field missing   */
+  /* ---------------------------------------------------------------- */
+  it("gate blocks paid booking and escalates when mandatory field missing", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient({ appointment: { id: 55555 } });
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    (ghl.getPipelineOpportunities as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "opp-gate-block", pipelineId: "pipe-001", pipelineStageId: "6459bbb1", contactId: "test-contact-gate-block" },
+    ]);
+
+    const service = new PaymentService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      ghlPipelineId: "pipe-001",
+      ghlLocationId: "loc-001",
+      stripeWebhookSecret: "whsec_test",
+      pollIntervalMs: 30000,
+    });
+
+    const contactId = "test-contact-gate-block";
+    const conversationId = "550e8400-e29b-41d4-a716-446655441111";
+
+    /* Seed conversation */
+    await db.query(
+      `INSERT INTO conversations (id, location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, $3, 'AWAITING_PAYMENT', $4, '{}')`,
+      [
+        conversationId,
+        "loc-001",
+        contactId,
+        JSON.stringify({
+          fullName: "Gate Block Test",
+          email: "gateblock@selfcaremen.co.nz",
+          serviceKey: "trt_initial",
+          slotIso: "2026-06-20T09:00:00+12:00",
+          /* phone and dob intentionally ABSENT — gate must block */
+        }),
+      ],
+    );
+
+    /* Seed payment session — no dob or phone in collected_fields */
+    await db.query(
+      `INSERT INTO payment_sessions
+       (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        "cs_test_gate_block",
+        "pending",
+        "2026-06-20T09:00:00+12:00",
+        "53224493",
+        contactId,
+        conversationId,
+        "checkout-test-gate-block",
+        JSON.stringify({
+          fullName: "Gate Block Test",
+          email: "gateblock@selfcaremen.co.nz",
+          serviceKey: "trt_initial",
+          slotIso: "2026-06-20T09:00:00+12:00",
+          /* phone and dob ABSENT */
+        }),
+      ],
+    );
+
+    const event = {
+      id: "evt_gate_block",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_test_gate_block",
+          customer_email: "gateblock@selfcaremen.co.nz",
+          metadata: {
+            conversation_id: conversationId,
+            service_key: "trt_initial",
+            slot_iso: "2026-06-20T09:00:00+12:00",
+            contact_id: contactId,
+            appointment_type_id: "53224493",
+            idempotency_key: "checkout-test-gate-block",
+          },
+        },
+      },
+    };
+    const payload = JSON.stringify(event);
+    const signature = makeStripeSignature(payload, "whsec_test");
+
+    /* Webhook must throw (gate blocked, patient paid but can't book) */
+    await expect(service.handleWebhook(Buffer.from(payload), signature)).rejects.toThrow(
+      /mandatory fields missing/i,
+    );
+
+    /* Assert createAppointment was NEVER called */
+    expect(acuity.createAppointment).not.toHaveBeenCalled();
+
+    /* Assert payment_session status set to manual_review */
+    const psResult = await db.query(
+      `SELECT status FROM payment_sessions WHERE stripe_session_id = $1`,
+      ["cs_test_gate_block"],
+    );
+    expect(psResult.rows[0].status).toBe("manual_review");
+
+    /* Assert conversation escalated to HUMAN_TOUCH */
+    const convResult = await db.query(
+      `SELECT current_state FROM conversations WHERE id = $1`,
+      [conversationId],
+    );
+    expect(convResult.rows[0].current_state).toBe("HUMAN_TOUCH");
+
+    /* Assert GHL tags set for manual review */
+    expect(ghl.addContactTags).toHaveBeenCalledWith(
+      "loc-001",
+      contactId,
+      expect.arrayContaining(["payment_gate_blocked", "manual_review_required"]),
+    );
   });
 });

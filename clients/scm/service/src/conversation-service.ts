@@ -706,6 +706,8 @@ export class ConversationService {
     }
 
     /* 7. Handle special states (with holding-message support) */
+    const channel = mapMessageTypeToChannel(message.type);
+
     if (nextState === "SHOWING_SLOTS") {
       const slotsResult = await this.handleShowingSlots(
         acuity,
@@ -728,6 +730,7 @@ export class ConversationService {
         holdingThresholdMs,
         location_id,
         contact_id,
+        channel,
       );
       nextState = checkoutResult.state;
       collected = checkoutResult.collected;
@@ -804,7 +807,6 @@ export class ConversationService {
           sent_at is left NULL until the send succeeds so that
           recoverUnsentReplies() can find and re-deliver on restart.
           Store the FULL SendPayload (GhlMessagePayload + locationId) so recovery has everything it needs. */
-    const channel = mapMessageTypeToChannel(message.type);
     let convId = payload.conversation_id ?? (conversation.ghl_conversation_id as string | undefined) ?? undefined;
     if (channel === "live_chat" && !convId) {
       try {
@@ -952,6 +954,7 @@ export class ConversationService {
     holdingThresholdMs: number,
     locationId: string,
     contactId: string,
+    inboundChannel: "sms" | "live_chat" | "whatsapp" | "email" = "sms",
   ): Promise<{ state: ScmState; collected: CollectedWithExtras }> {
     const service =
       typeof collected.serviceKey === "string"
@@ -1005,6 +1008,7 @@ export class ConversationService {
         contact_id: contactId,
         appointment_type_id: String(service.acuityTypeId),
         idempotency_key: `checkout-${conversation.id}-${slotIso}`,
+        inbound_channel: inboundChannel,
       },
       paymentIntentData: {
         receipt_email: collected.email ?? undefined,
@@ -1032,8 +1036,8 @@ export class ConversationService {
         clearTimeout(timer);
         await db.query(
           `INSERT INTO payment_sessions
-           (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields, inbound_channel)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             session.id,
             session.status ?? "open",
@@ -1043,6 +1047,7 @@ export class ConversationService {
             conversation.id,
             `checkout-${conversation.id}-${slotIso}`,
             JSON.stringify(collected),
+            inboundChannel,
           ],
         );
         return {
@@ -1063,8 +1068,8 @@ export class ConversationService {
       const session = await checkoutPromise;
       await db.query(
         `INSERT INTO payment_sessions
-         (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         (stripe_session_id, status, slot_iso, appointment_type_id, contact_id, conversation_id, idempotency_key, collected_fields, inbound_channel)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           session.id,
           session.status ?? "open",
@@ -1074,6 +1079,7 @@ export class ConversationService {
           conversation.id,
           `checkout-${conversation.id}-${slotIso}`,
           JSON.stringify(collected),
+          inboundChannel,
         ],
       );
       return {
