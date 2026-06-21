@@ -5,6 +5,7 @@ import {
   validatePhone,
   validateService,
   validateSlotSelection,
+  normalizeDob,
 } from "./validators.js";
 
 describe("validateEmail", () => {
@@ -44,10 +45,16 @@ describe("validateEmail", () => {
 });
 
 describe("validatePhone", () => {
-  it("rejects bare NZ number 0210000000 (no country established)", () => {
+  it("accepts bare NZ mobile 0210000000 (assumes +64)", () => {
     const result = validatePhone("0210000000");
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("no_country");
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("+64210000000");
+  });
+
+  it("accepts bare NZ landline 093000000 (assumes +64)", () => {
+    const result = validatePhone("093000000");
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("+6493000000");
   });
 
   it("rejects too short number", () => {
@@ -72,6 +79,12 @@ describe("validatePhone", () => {
     const result = validatePhone("0064 21 000 0000");
     expect(result.ok).toBe(true);
     expect(result.value).toBe("+64210000000");
+  });
+
+  it("accepts international number with explicit prefix", () => {
+    const result = validatePhone("+61 412 345 678");
+    expect(result.ok).toBe(true);
+    expect(result.value).toBe("+61412345678");
   });
 });
 
@@ -149,6 +162,72 @@ describe("validateSlotSelection", () => {
     ]);
     expect(result.ok).toBe(false);
     expect(result.error).toBe("invalid_slot");
+  });
+});
+
+describe("normalizeDob", () => {
+  it("normalizes DD/MM/YYYY with day > 12 (unambiguous)", () => {
+    const result = normalizeDob("26/7/1995");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("07/26/1995");
+  });
+
+  it("normalizes ISO YYYY-MM-DD", () => {
+    const result = normalizeDob("1995-07-26");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("07/26/1995");
+  });
+
+  it("normalizes 'July 26 1995'", () => {
+    const result = normalizeDob("July 26 1995");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("07/26/1995");
+  });
+
+  it("normalizes '26 Jul 1995'", () => {
+    const result = normalizeDob("26 Jul 1995");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("07/26/1995");
+  });
+
+  it("normalizes DD.MM.YYYY", () => {
+    const result = normalizeDob("26.07.1995");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toBe("07/26/1995");
+  });
+
+  it("flags ambiguous 09/06/1990", () => {
+    const result = normalizeDob("09/06/1990");
+    expect(result.ok).toBe(false);
+    if (!result.ok && "ambiguous" in result) {
+      expect(result.ambiguous).toBe(true);
+      expect(result.hint).toContain("June");
+      expect(result.hint).toContain("September");
+    }
+  });
+
+  it("rejects impossible date 31/02/1990", () => {
+    const result = normalizeDob("31/02/1990");
+    expect(result.ok).toBe(false);
+    if (!result.ok && "error" in result) {
+      expect(result.error).toBe("invalid_day");
+    }
+  });
+
+  it("rejects too young (age < 16)", () => {
+    const result = normalizeDob("01/01/2020");
+    expect(result.ok).toBe(false);
+    if (!result.ok && "error" in result) {
+      expect(result.error).toBe("too_young");
+    }
+  });
+
+  it("rejects implausible age (> 120)", () => {
+    const result = normalizeDob("01/01/1800");
+    expect(result.ok).toBe(false);
+    if (!result.ok && "error" in result) {
+      expect(result.error).toBe("implausible_age");
+    }
   });
 });
 

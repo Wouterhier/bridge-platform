@@ -8,6 +8,177 @@ const FAKE_DOMAINS = new Set([
   "selfcaremen.booking",
 ]);
 
+/* ── Date-of-birth normalizer ─────────────────────────────────────────── */
+
+export type DobResult =
+  | { ok: true; value: string }
+  | { ok: false; ambiguous: true; hint: string }
+  | { ok: false; error: string };
+
+/**
+ * Normalize a raw date-of-birth string to Acuity's expected "MM/DD/YYYY" format.
+ *
+ * - Accepts many human formats: "26/7/95", "July 26 1995", "1995-07-26",
+ *   "26 Jul 1995", "26.07.1995", etc.
+ * - Flags ambiguous dates (e.g. "09/06/1990") instead of guessing.
+ * - Rejects impossible dates and implausible ages (< 16 or > 120).
+ */
+export function normalizeDob(raw: string): DobResult {
+  const value = raw.trim();
+  if (!value) {
+    return { ok: false, error: "dob_required" };
+  }
+
+  // Try ISO-like first: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    const result = validateDateParts(year, month, day);
+    if (!result.ok) return result;
+    return { ok: true, value: formatDate(month, day, year) };
+  }
+
+  // Try DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const dmyMatch = value.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10);
+    let year = parseInt(dmyMatch[3], 10);
+    if (year < 100) year += year < 30 ? 2000 : 1900;
+
+    // Ambiguity check: if both day and month are ≤ 12, flag it
+    if (day <= 12 && month <= 12 && day !== month) {
+      return {
+        ok: false,
+        ambiguous: true,
+        hint: `${day}th of ${monthName(month)} or ${month}th of ${monthName(day)}?`,
+      };
+    }
+
+    const result = validateDateParts(year, month, day);
+    if (!result.ok) return result;
+    return { ok: true, value: formatDate(month, day, year) };
+  }
+
+  // Try "DD Mon YYYY" or "Mon DD YYYY" or "Month DD YYYY"
+  const monthDayYearMatch = value.match(
+    /^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?[,\s]+(\d{2,4})$/,
+  );
+  if (monthDayYearMatch) {
+    const month = parseMonthName(monthDayYearMatch[1]);
+    const day = parseInt(monthDayYearMatch[2], 10);
+    let year = parseInt(monthDayYearMatch[3], 10);
+    if (year < 100) year += year < 30 ? 2000 : 1900;
+    if (month === 0) return { ok: false, error: "invalid_month" };
+    const result = validateDateParts(year, month, day);
+    if (!result.ok) return result;
+    return { ok: true, value: formatDate(month, day, year) };
+  }
+
+  const dayMonthYearMatch = value.match(
+    /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)[,\s]+(\d{2,4})$/,
+  );
+  if (dayMonthYearMatch) {
+    const day = parseInt(dayMonthYearMatch[1], 10);
+    const month = parseMonthName(dayMonthYearMatch[2]);
+    let year = parseInt(dayMonthYearMatch[3], 10);
+    if (year < 100) year += year < 30 ? 2000 : 1900;
+    if (month === 0) return { ok: false, error: "invalid_month" };
+    const result = validateDateParts(year, month, day);
+    if (!result.ok) return result;
+    return { ok: true, value: formatDate(month, day, year) };
+  }
+
+  // Try MM/DD/YYYY (American format) — unambiguous if first part > 12
+  const mdyMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (mdyMatch) {
+    const month = parseInt(mdyMatch[1], 10);
+    const day = parseInt(mdyMatch[2], 10);
+    let year = parseInt(mdyMatch[3], 10);
+    if (year < 100) year += year < 30 ? 2000 : 1900;
+
+    if (month > 12) {
+      // Actually this is probably DD/MM
+      const result = validateDateParts(year, month, day);
+      if (!result.ok) return result;
+      return { ok: true, value: formatDate(day, month, year) };
+    }
+
+    if (day <= 12 && month <= 12 && day !== month) {
+      return {
+        ok: false,
+        ambiguous: true,
+        hint: `${month}th of ${monthName(day)} or ${day}th of ${monthName(month)}?`,
+      };
+    }
+
+    const result = validateDateParts(year, month, day);
+    if (!result.ok) return result;
+    return { ok: true, value: formatDate(month, day, year) };
+  }
+
+  return { ok: false, error: "unrecognized_date_format" };
+}
+
+function monthName(month: number): string {
+  const names = [
+    "", "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return names[month] ?? "";
+}
+
+function parseMonthName(name: string): number {
+  const lower = name.toLowerCase().slice(0, 3);
+  const map: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  };
+  return map[lower] ?? 0;
+}
+
+function formatDate(month: number, day: number, year: number): string {
+  const m = String(month).padStart(2, "0");
+  const d = String(day).padStart(2, "0");
+  return `${m}/${d}/${year}`;
+}
+
+function validateDateParts(
+  year: number,
+  month: number,
+  day: number,
+): DobResult {
+  if (month < 1 || month > 12) {
+    return { ok: false, error: "invalid_month" };
+  }
+  if (day < 1 || day > daysInMonth(month, year)) {
+    return { ok: false, error: "invalid_day" };
+  }
+
+  const dob = new Date(year, month - 1, day);
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const mDiff = now.getMonth() - dob.getMonth();
+  if (mDiff < 0 || (mDiff === 0 && now.getDate() < dob.getDate())) {
+    age--;
+  }
+
+  if (age < 16) {
+    return { ok: false, error: "too_young" };
+  }
+  if (age > 120) {
+    return { ok: false, error: "implausible_age" };
+  }
+
+  return { ok: true, value: formatDate(month, day, year) };
+}
+
+function daysInMonth(month: number, year: number): number {
+  return new Date(year, month, 0).getDate();
+}
+
 // AI-mutation defense is in the state machine engine: this validator runs
 // against the patient's raw message, not the AI's output. We only validate
 // format and block fake domains here. Plus-addressing (local+tag@domain) is
@@ -58,8 +229,16 @@ export function validateEmail(raw: string): ValidationResult<string> {
   return { ok: true, value };
 }
 
-export type PhoneErrorKey = "too_short" | "no_country" | "invalid_chars";
+export type PhoneErrorKey = "too_short" | "invalid_chars";
 
+/**
+ * Validate and normalize a phone number to E.164 (+64...).
+ *
+ * - NZ is the default assumption. Numbers without a country code are
+ *   treated as NZ numbers (02x mobile, 0x landline).
+ * - Accepts +64 and 0064 prefixed numbers.
+ * - Rejects non-numeric characters and numbers that are too short.
+ */
 export function validatePhone(raw: string): ValidationResult<string> {
   const trimmed = raw.trim();
 
@@ -77,16 +256,21 @@ export function validatePhone(raw: string): ValidationResult<string> {
   }
 
   const hasCountryIndicator = trimmed.startsWith("+") || trimmed.startsWith("00");
-  if (!hasCountryIndicator) {
-    return { ok: false, error: "no_country" as PhoneErrorKey };
-  }
 
   let normalized: string;
   if (trimmed.startsWith("+")) {
     normalized = `+${digits}`;
-  } else {
-    // starts with 00
+  } else if (trimmed.startsWith("00")) {
     normalized = `+${digits.slice(2)}`;
+  } else {
+    // No country code — assume NZ (+64)
+    // NZ numbers start with 0 locally; strip the leading 0 and add +64
+    if (digits.startsWith("0")) {
+      normalized = `+64${digits.slice(1)}`;
+    } else {
+      // If no leading 0, just prepend +64 (e.g. "21 000 0000" → +64210000000)
+      normalized = `+64${digits}`;
+    }
   }
 
   return { ok: true, value: normalized };
