@@ -13,6 +13,7 @@ import { generate } from "@romea/scm-flow";
 import { getFallbackMessage } from "@romea/scm-flow";
 import { shouldEscalate } from "@romea/scm-flow";
 import { getService, isPaidService } from "@romea/scm-flow";
+import { validatePhone, validateEmail } from "@romea/scm-flow";
 import { sanitizeOutput } from "@romea/scm-flow";
 import type { createGhlClient } from "@romea/ghl-client";
 import type { createAcuityClient } from "@romea/acuity-client";
@@ -263,11 +264,58 @@ async function shouldDebounce(
   return Date.now() - lastProcessed < debounceMs;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Webhook seeding                                                    */
+/* ------------------------------------------------------------------ */
+
+const PLACEHOLDER_NAMES = new Set(["guest visitor", "guest", "visitor", "test user", "test", "user"]);
+
+function seedFromWebhook(raw: Record<string, unknown>): Partial<ScmCollected> {
+  const seeded: Partial<ScmCollected> = {};
+
+  // Name extraction
+  const fullName =
+    (raw.full_name as string) ||
+    (raw.fullName as string) ||
+    (raw.name as string) ||
+    ((raw.first_name as string) && (raw.last_name as string)
+      ? `${raw.first_name as string} ${raw.last_name as string}`.trim()
+      : undefined) ||
+    ((raw.firstName as string) && (raw.lastName as string)
+      ? `${raw.firstName as string} ${raw.lastName as string}`.trim()
+      : undefined);
+
+  if (fullName && !PLACEHOLDER_NAMES.has(fullName.toLowerCase().trim())) {
+    seeded.fullName = fullName.trim();
+  }
+
+  // Phone extraction + normalization
+  const rawPhone = (raw.phone as string) || (raw.phoneNumber as string) || (raw.mobile as string);
+  if (rawPhone) {
+    const phoneResult = validatePhone(rawPhone);
+    if (phoneResult.ok && phoneResult.value) {
+      seeded.phone = phoneResult.value;
+    }
+  }
+
+  // Email extraction + validation
+  const rawEmail = (raw.email as string) || (raw.emailAddress as string);
+  if (rawEmail) {
+    const emailResult = validateEmail(rawEmail);
+    if (emailResult.ok && emailResult.value) {
+      seeded.email = emailResult.value;
+    }
+  }
+
+  return seeded;
+}
+
 async function findOrCreateConversation(
   db: Pool,
   locationId: string,
   contactId: string,
   ghlConversationId?: string,
+  webhookPayload?: Record<string, unknown>,
 ): Promise<ConversationRow> {
   const existing = await db.query<ConversationRow>(
     `SELECT * FROM conversations WHERE location_id = $1 AND contact_id = $2 LIMIT 1`,
@@ -282,14 +330,38 @@ async function findOrCreateConversation(
       );
       return { ...existing.rows[0], ghl_conversation_id: ghlConversationId };
     }
+
+    // Merge webhook seeds for existing conversation (only fill gaps)
+    if (webhookPayload) {
+      const seeded = seedFromWebhook(webhookPayload);
+      const current = existing.rows[0].collected_fields as Record<string, unknown>;
+      const merged = { ...current };
+      let hasNew = false;
+      for (const [key, value] of Object.entries(seeded)) {
+        if (merged[key] === undefined || merged[key] === null || merged[key] === "") {
+          merged[key] = value;
+          hasNew = true;
+        }
+      }
+      if (hasNew) {
+        await db.query(
+          `UPDATE conversations SET collected_fields = $1, updated_at = now() WHERE id = $2`,
+          [JSON.stringify(merged), existing.rows[0].id],
+        );
+        return { ...existing.rows[0], collected_fields: merged };
+      }
+    }
+
     return existing.rows[0];
   }
 
+  // New conversation: seed from webhook if available
+  const seeded = webhookPayload ? seedFromWebhook(webhookPayload) : {};
   const inserted = await db.query<ConversationRow>(
     `INSERT INTO conversations (location_id, contact_id, ghl_conversation_id, current_state, collected_fields, context)
-     VALUES ($1, $2, $3, 'NEW', '{}', '{}')
+     VALUES ($1, $2, $3, 'NEW', $4, '{}')
      RETURNING *`,
-    [locationId, contactId, ghlConversationId ?? null],
+    [locationId, contactId, ghlConversationId ?? null, JSON.stringify(seeded)],
   );
   return inserted.rows[0];
 }
@@ -476,7 +548,7 @@ export class ConversationService {
         buildGhlSendPayload(imgChannel, contact_id, payload.conversation_id,
           "I can't view images or attachments in this chat. A member of our team will review it and follow up shortly.")
       );
-      const conversation = await findOrCreateConversation(db, location_id, contact_id, payload.conversation_id);
+      const conversation = await findOrCreateConversation(db, location_id, contact_id, payload.conversation_id, rawPayload as Record<string, unknown>);
       await updateConversation(db, conversation.id, conversation.current_state as ScmState, conversation.collected_fields as ScmCollected, {
         ...conversation.context,
         escalated: true,
@@ -501,7 +573,7 @@ export class ConversationService {
     }
 
     /* 3. Load / create conversation */
-    let conversation = await findOrCreateConversation(db, location_id, contact_id, payload.conversation_id);
+    let conversation = await findOrCreateConversation(db, location_id, contact_id, payload.conversation_id, rawPayload as Record<string, unknown>);
 
     /* 4. Escalation guard */
     const escalation = shouldEscalate(
