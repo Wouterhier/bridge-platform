@@ -1149,7 +1149,7 @@ export class ConversationService {
         gateCheck.missing.map((f: { key: string }) => f.key).join(", ") + "\n"
       );
       return {
-        state: "COLLECTING_NAME" as ScmState,
+        state: "COLLECTING" as ScmState,
         collected: {
           ...collected,
           missingFields: gateCheck.missing.map((f: { key: string }) => f.key),
