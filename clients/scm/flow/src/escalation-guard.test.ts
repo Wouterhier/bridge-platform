@@ -58,4 +58,31 @@ describe("shouldEscalate", () => {
     expect(shouldEscalate("")).toEqual({ escalate: false });
     expect(shouldEscalate("   ")).toEqual({ escalate: false });
   });
+
+  it("escalates new self-harm patterns", () => {
+    expect(shouldEscalate("I want to hurt myself")).toEqual({
+      escalate: true,
+      reason: "medical_emergency",
+    });
+    expect(shouldEscalate("I want to end it all")).toEqual({
+      escalate: true,
+      reason: "medical_emergency",
+    });
+    expect(shouldEscalate("I can't go on anymore")).toEqual({
+      escalate: true,
+      reason: "medical_emergency",
+    });
+    expect(shouldEscalate("I don't want to be here")).toEqual({
+      escalate: true,
+      reason: "medical_emergency",
+    });
+    expect(shouldEscalate("I want to kill myself")).toEqual({
+      escalate: true,
+      reason: "medical_emergency",
+    });
+    expect(shouldEscalate("I have no reason to live")).toEqual({
+      escalate: true,
+      reason: "medical_emergency",
+    });
+  });
 });

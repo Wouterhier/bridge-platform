@@ -8,7 +8,7 @@ import {
   type ScmContext,
   type SlotMenuItem,
 } from "@romea/scm-flow";
-import { extract } from "@romea/scm-flow";
+import { extract, type ExtractionHint } from "@romea/scm-flow";
 import { generate } from "@romea/scm-flow";
 import { getFallbackMessage } from "@romea/scm-flow";
 import { shouldEscalate } from "@romea/scm-flow";
@@ -93,7 +93,7 @@ export function parseInbound(raw: unknown): InboundPayload | null {
     messageBody = (payload.body as string) || (payload.text as string) || "";
   }
   if (!messageId) {
-    messageId = (payload.message_id as string) || "";
+    messageId = (payload.messageId as string) || (payload.message_id as string) || "";
   }
   if (!messageType) {
     messageType =
@@ -344,34 +344,43 @@ function buildGhlSendPayload(
 /*  Extraction helper                                                  */
 /* ------------------------------------------------------------------ */
 
+interface ExtractResult {
+  value: string | null;
+  safetyConcern: boolean;
+  concernType?: string;
+}
+
 async function tryExtract(
   state: ScmState,
   rawMessage: string,
   collected: ScmCollected,
   router: ModelRouter,
-): Promise<string | null> {
+): Promise<ExtractResult> {
   const hint = await extract(state, rawMessage, [], collected, { router });
-  if (!hint) return null;
+  if (!hint) return { value: null, safetyConcern: false };
+
+  const safetyConcern = hint.safety_concern === true;
+  const concernType = hint.concern_type as string | undefined;
 
   switch (state) {
     case "COLLECTING_NAME":
-      if (hint.fullName) return hint.fullName;
-      if (hint.firstName && hint.lastName) return `${hint.firstName} ${hint.lastName}`;
-      return null;
+      if (hint.fullName) return { value: hint.fullName, safetyConcern, concernType };
+      if (hint.firstName && hint.lastName) return { value: `${hint.firstName} ${hint.lastName}`, safetyConcern, concernType };
+      return { value: null, safetyConcern, concernType };
     case "COLLECTING_PHONE":
-      if (hint.phone) return hint.phone;
-      return null;
+      if (hint.phone) return { value: hint.phone, safetyConcern, concernType };
+      return { value: null, safetyConcern, concernType };
     case "COLLECTING_EMAIL":
-      if (hint.email) return hint.email;
-      return null;
+      if (hint.email) return { value: hint.email, safetyConcern, concernType };
+      return { value: null, safetyConcern, concernType };
     case "SELECTING_SERVICE":
-      if (hint.serviceKey) return hint.serviceKey;
-      return null;
+      if (hint.serviceKey) return { value: hint.serviceKey, safetyConcern, concernType };
+      return { value: null, safetyConcern, concernType };
     case "AWAITING_SELECTION":
-      if (hint.slotIso) return hint.slotIso;
-      return null;
+      if (hint.slotIso) return { value: hint.slotIso, safetyConcern, concernType };
+      return { value: null, safetyConcern, concernType };
     default:
-      return null;
+      return { value: null, safetyConcern, concernType };
   }
 }
 
@@ -490,7 +499,14 @@ export class ConversationService {
       conversation.collected_fields as ScmCollected,
       router,
     );
-    const enrichedRawMessage = extracted ?? rawMessage;
+
+    /* 5b. Model-side safety classification (layer 2) */
+    if (extracted.safetyConcern) {
+      await this.escalate(location_id, contact_id, conversation, `model_safety:${extracted.concernType ?? "concern"}`);
+      return { sent: false, reason: "escalated:model_safety" };
+    }
+
+    const enrichedRawMessage = extracted.value ?? rawMessage;
 
     /* 6. Run state machine */
     const context: ScmContext =
@@ -975,7 +991,7 @@ export class ConversationService {
     const { db, ghl } = this.deps;
 
     /* Update conversation state */
-    await updateConversation(db, conversation.id, "CONFIRMED", conversation.collected_fields as ScmCollected, {
+    await updateConversation(db, conversation.id, "HUMAN_TOUCH" as any, conversation.collected_fields as ScmCollected, {
       ...conversation.context,
       escalated: true,
       escalationReason: reason,
@@ -1040,7 +1056,7 @@ export class ConversationService {
           pipelineStageId: targetStageId,
           locationId,
           contactId,
-          name: "New Lead",
+          name: ((collected.fullName as string) || [(collected as any).firstName, (collected as any).lastName].filter(Boolean).join(" ") || "New Lead"),
           status: "open",
         });
       }

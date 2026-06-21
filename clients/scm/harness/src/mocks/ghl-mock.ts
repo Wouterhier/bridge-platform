@@ -32,7 +32,15 @@ export function createMockGhlClient(): ReturnType<typeof createGhlClient> {
     }),
     getPipelineOpportunities: vi.fn(async () => []),
     createOpportunity: vi.fn(async () => ({ id: `mock-opp-${Date.now()}` })),
-    updateOpportunityStage: vi.fn(async () => ({ id: `mock-opp-${Date.now()}` })),
-    updateOpportunityStageSafe: vi.fn(async () => ({ id: `mock-opp-${Date.now()}` })),
+    updateOpportunityStage: vi.fn(async (_locationId: string, _opportunityId: string, stageId: string) => {
+      // Enforce real GHL contract: stageId must be a non-empty string (maps to pipelineStageId in body)
+      if (!stageId || typeof stageId !== "string") throw new Error("GHL mock: updateOpportunityStage requires stageId string");
+      return { id: `mock-opp-${Date.now()}`, pipelineStageId: stageId };
+    }),
+    updateOpportunityStageSafe: vi.fn(async (_locationId: string, _opportunityId: string, targetStageId: string, _currentStageId?: string, _escalationStageId?: string) => {
+      // Enforce real GHL contract: targetStageId must be a non-empty string (maps to pipelineStageId in body)
+      if (!targetStageId || typeof targetStageId !== "string") throw new Error("GHL mock: updateOpportunityStageSafe requires targetStageId string");
+      return { id: `mock-opp-${Date.now()}`, pipelineStageId: targetStageId };
+    }),
   } as unknown as ReturnType<typeof createGhlClient>;
 }

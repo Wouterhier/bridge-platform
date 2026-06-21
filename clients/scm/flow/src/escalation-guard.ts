@@ -1,5 +1,19 @@
 const EMERGENCY_PATTERNS = [
-  /\b(chest pain|can't breathe|cannot breathe|difficulty breathing|short of breath|breathlessness|suicide|suicidal|self[- ]?harm|overdose|heart attack|stroke symptoms|severe bleeding|unconscious|fainting|severe allergic reaction|anaphylaxis|severe pain|thoughts of (harming myself|ending my life|killing myself)|hurt(ing)? myself|harm myself|end it all|end my life|don't want to (be here|live|go on)|no reason to live|want to die|want to end (it|my life)|kill myself|can't go on|can't cope|hopeless|worthless)\b/i,
+  /\b(chest pain|can't breathe|cannot breathe|difficulty breathing|short of breath|breathlessness|suicide|suicidal|self[- ]?harm|overdose|heart attack|stroke symptoms|severe bleeding|unconscious|fainting|severe allergic reaction|anaphylaxis|severe pain)\b/i,
+  /\bthoughts of (harming myself|ending my life|killing myself)\b/i,
+  /\b(hurt(ing)? myself|harm myself)\b/i,
+  /\bend it all\b/i,
+  /\bend my life\b/i,
+  /\bdon't want to be here\b/i,
+  /\bdon't want to live\b/i,
+  /\bno reason to live\b/i,
+  /\bwant to die\b/i,
+  /\bwant to end (it|my life)\b/i,
+  /\bkill myself\b/i,
+  /\bcan't go on\b/i,
+  /\bcan't cope\b/i,
+  /\bhopeless\b/i,
+  /\bworthless\b/i,
 ];
 
 // Steroids, SARMs, PEDs and related anabolic compounds.
