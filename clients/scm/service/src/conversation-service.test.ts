@@ -656,6 +656,76 @@ describe("conversation-service", () => {
   });
 
   /* ---------------------------------------------------------------- */
+  /*  Test — Defense-in-depth gate blocks booking with missing fields */
+  /* ---------------------------------------------------------------- */
+  it("gate blocks booking when mandatory fields are missing", async () => {
+    const ghl = createMockGhlClient();
+    const acuity = createMockAcuityClient({
+      appointment: { id: 8888 },
+    });
+    const stripe = createMockStripeClient();
+    const router = createMockRouter();
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    const contactId = "test-contact-gate-blocks";
+    const slotIso = "2026-06-20T09:00:00+12:00";
+
+    /* Seed at AWAITING_SELECTION with slotMenu; missing dob + phone */
+    await db.query(
+      `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, 'AWAITING_SELECTION', $3, '{}')`,
+      [
+        "test-loc-001",
+        contactId,
+        JSON.stringify({
+          fullName: "John Smith",
+          email: "john.smith@example.com",
+          serviceKey: "free_eligibility",
+          slotMenu: [{ iso: slotIso, formatted: "Saturday, 20 June at 9:00 am Pacific/Auckland" }],
+          slotMenuFormatted: "1. Saturday, 20 June at 9:00 am Pacific/Auckland",
+          /* dob and phone intentionally omitted */
+        }),
+      ],
+    );
+
+    /* Sending the exact slot ISO triggers AWAITING_SELECTION → BOOKING_ACUITY,
+       which then calls handleBookingAcuity where the gate blocks. */
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: contactId,
+        message: { id: "gate-block-1", body: slotIso, direction: "inbound", type: "SMS" },
+      }),
+    );
+    expect(result.sent).toBe(true);
+
+    /* Assert Acuity booking was NOT called */
+    expect(acuity.createAppointment).not.toHaveBeenCalled();
+
+    /* Assert conversation returned to COLLECTING with missingFields set */
+    const convResult = await db.query(
+      `SELECT current_state, collected_fields FROM conversations WHERE contact_id = $1`,
+      [contactId],
+    );
+    expect(convResult.rows[0].current_state).toBe("COLLECTING_NAME");
+    const collected = convResult.rows[0].collected_fields as Record<string, unknown>;
+    expect(collected.missingFields).toBeDefined();
+    expect(Array.isArray(collected.missingFields)).toBe(true);
+    expect((collected.missingFields as string[]).length).toBeGreaterThan(0);
+  });
+
+  /* ---------------------------------------------------------------- */
   /*  Test 6 — Crash between processed_messages commit and send       */
   /* ---------------------------------------------------------------- */
   it("leaves sent_at NULL when GHL send fails and recovers on restart", async () => {

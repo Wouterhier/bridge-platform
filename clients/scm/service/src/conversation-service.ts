@@ -1139,6 +1139,24 @@ export class ConversationService {
     const slotIso = collected.slotIso;
     if (!slotIso) return { state: "AWAITING_SELECTION", collected };
 
+    // Defense-in-depth gate: verify all mandatory fields are present even if
+    // the transition gate somehow let this state be reached with missing data.
+    const service_key = service.key ?? "";
+    const gateCheck = gateApiCall(service.acuityTypeId, collected as Record<string, unknown>);
+    if (!gateCheck.ready) {
+      process.stderr.write(
+        "[handleBookingAcuity] gate blocked — mandatory fields missing: " +
+        gateCheck.missing.map((f: { key: string }) => f.key).join(", ") + "\n"
+      );
+      return {
+        state: "COLLECTING_NAME" as ScmState,
+        collected: {
+          ...collected,
+          missingFields: gateCheck.missing.map((f: { key: string }) => f.key),
+        },
+      };
+    }
+
     const fullName = collected.fullName ?? "";
     const [firstName, ...lastNameParts] = fullName.split(" ");
     const lastName = lastNameParts.join(" ");

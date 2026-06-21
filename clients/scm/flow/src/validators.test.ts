@@ -199,11 +199,10 @@ describe("normalizeDob", () => {
   it("flags ambiguous 09/06/1990", () => {
     const result = normalizeDob("09/06/1990");
     expect(result.ok).toBe(false);
-    if (!result.ok && "ambiguous" in result) {
-      expect(result.ambiguous).toBe(true);
-      expect(result.hint).toContain("June");
-      expect(result.hint).toContain("September");
-    }
+    const ambigResult = result as { ok: false; ambiguous: true; hint: string };
+    expect(ambigResult.ambiguous).toBe(true);
+    expect(ambigResult.hint).toContain("June");
+    expect(ambigResult.hint).toContain("September");
   });
 
   it("rejects impossible date 31/02/1990", () => {
