@@ -122,6 +122,32 @@ describe("SCM flow happy path", () => {
   });
 });
 
+describe("webhook seeding", () => {
+  it("ENGAGING prompt does not re-ask for name/phone when seeded", async () => {
+    const engine = makeEngine();
+    const result = await engine.process({
+      rawMessage: "Hi",
+      conversation: {
+        currentState: "ENGAGING",
+        collected: { fullName: "Jane Doe", phone: "+6421234567" },
+      },
+      context: emptyContext,
+    });
+    expect(result.state).toBe("ENGAGING");
+
+    // Build prompt context should not ask for name or phone
+    const config = createScmStateMachineConfig();
+    const ctx = config.states.ENGAGING.buildPromptContext(
+      { fullName: "Jane Doe", phone: "+6421234567" } as Record<string, unknown>,
+      emptyContext,
+    );
+    const lower = ctx.toLowerCase();
+    expect(lower).not.toContain("what's your name");
+    expect(lower).not.toContain("your name");
+    expect(lower).not.toContain("phone number");
+  });
+});
+
 describe("SCM flow failure paths", () => {
   it("stays in ENGAGING without booking intent", async () => {
     const engine = makeEngine();

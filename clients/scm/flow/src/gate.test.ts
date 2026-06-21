@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { gateApiCall, buildValidatedPayload } from "./gate.js";
 
 describe("gateApiCall", () => {
-  it("blocks on missing dob", () => {
+  it("blocks on missing dob and phone when only name+email given", () => {
     const result = gateApiCall(79429909, {
       fullName: "John Smith",
       email: "j@x.com",
-      phone: "+64210000000",
-      // dob intentionally absent
+      // phone and dob intentionally absent
     });
     expect(result.ready).toBe(false);
     if (!result.ready) {
       expect(result.missing.some((f) => f.key === "dob")).toBe(true);
+      expect(result.missing.some((f) => f.key === "phone")).toBe(true);
     }
   });
 
