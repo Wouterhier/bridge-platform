@@ -431,6 +431,10 @@ export interface CollectedFields {
  * given service key / appointment type.
  *
  * Field ids are taken from the verified SelfCareMen Acuity configuration.
+ *
+ * NO silent defaults. A missing mandatory field is passed as undefined;
+ * the caller MUST gate this via gateApiCall() before invoking. Optional
+ * fields are omitted entirely when absent.
  */
 export function mapIntakeFields(
   serviceKey: string,
@@ -441,116 +445,142 @@ export function mapIntakeFields(
     throw new Error(`Unknown service key: ${serviceKey}`);
   }
 
+  // Derive patient name from available data; NO fallback to "Not provided".
   const patientName =
     collected.patientName ||
     `${collected.firstName ?? ""} ${collected.lastName ?? ""}`.trim() ||
-    "Not provided";
-  const dob = collected.dob || "01/01/1990";
-  const address = collected.address || "Not provided";
+    undefined;
+
+  // Mandatory fields: pass through as-is (undefined if missing).
+  // The deterministic gate (gateApiCall) guarantees these are present
+  // before this function is called.
+  const dob = collected.dob;
+
+  // Optional fields: omit if absent — never default.
+  const address = collected.address;
   const consultType =
-    service.name.replace(" Consultation", "").replace(" Follow-up", "") ||
-    "Consultation";
-  const meds = collected.currentMedications || "None";
-  const gpName = collected.gpName || "";
-  const questionsToDiscuss = collected.questionsToDiscuss || "";
+    service.name.replace(" Consultation", "").replace(" Follow-up", "") || undefined;
+  const meds = collected.currentMedications;
+  const gpName = collected.gpName;
+  const questionsToDiscuss = collected.questionsToDiscuss;
+
+  function field(id: number, value: string | undefined): AcuityFormField | null {
+    return value !== undefined && value !== "" ? { id, value } : null;
+  }
 
   const apptId = String(service.acuityTypeId);
 
   // FREE ELIGIBILITY (79429909) — form 2966861
   if (apptId === "79429909") {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16440628, value: "yes" },
-      { id: 16762638, value: dob },
-      { id: 16763392, value: address },
-      { id: 16736078, value: consultType },
-      { id: 16736084, value: questionsToDiscuss },
     ];
+    if (dob !== undefined) out.push({ id: 16762638, value: dob });
+    if (address !== undefined) out.push({ id: 16763392, value: address });
+    if (consultType !== undefined) out.push({ id: 16736078, value: consultType });
+    if (questionsToDiscuss !== undefined) out.push({ id: 16736084, value: questionsToDiscuss });
+    return out;
   }
 
   // TRT INITIAL/FOLLOWUP/ON-TREATMENT (53224493, 53721340, 88117019)
   if (["53224493", "53721340", "88117019"].includes(apptId)) {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16440628, value: "yes" },
-      { id: 13992148, value: patientName },
-      { id: 14056070, value: dob },
       { id: 18249027, value: "Acknowledged" },
-      { id: 13992150, value: address },
-      { id: 13992159, value: gpName },
-      { id: 13992164, value: meds },
     ];
+    if (patientName !== undefined) out.push({ id: 13992148, value: patientName });
+    if (dob !== undefined) out.push({ id: 14056070, value: dob });
+    if (address !== undefined) out.push({ id: 13992150, value: address });
+    if (gpName !== undefined) out.push({ id: 13992159, value: gpName });
+    if (meds !== undefined) out.push({ id: 13992164, value: meds });
+    return out;
   }
 
   // TRT EXPRESS (76832356) — own T&C
   if (apptId === "76832356") {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16438224, value: "yes" },
       { id: 16440628, value: "yes" },
-      { id: 13992148, value: patientName },
-      { id: 14056070, value: dob },
       { id: 18249027, value: "Acknowledged" },
     ];
+    if (patientName !== undefined) out.push({ id: 13992148, value: patientName });
+    if (dob !== undefined) out.push({ id: 14056070, value: dob });
+    return out;
   }
 
   // ROIDCARE INITIAL/FOLLOWUP (53693767, 80478945)
   if (["53693767", "80478945"].includes(apptId)) {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16440628, value: "yes" },
-      { id: 18235349, value: patientName },
-      { id: 18235350, value: dob },
-      { id: 18235352, value: address },
-      { id: 13992148, value: patientName },
-      { id: 14056070, value: dob },
       { id: 18249027, value: "Acknowledged" },
     ];
+    if (patientName !== undefined) {
+      out.push({ id: 18235349, value: patientName });
+      out.push({ id: 13992148, value: patientName });
+    }
+    if (dob !== undefined) {
+      out.push({ id: 18235350, value: dob });
+      out.push({ id: 14056070, value: dob });
+    }
+    if (address !== undefined) out.push({ id: 18235352, value: address });
+    return out;
   }
 
   // GLP-1 INITIAL/FOLLOWUP (80075841, 80576455)
   if (["80075841", "80576455"].includes(apptId)) {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16440628, value: "yes" },
-      { id: 18235376, value: patientName },
-      { id: 18235377, value: dob },
-      { id: 18235378, value: address },
-      { id: 13992148, value: patientName },
-      { id: 14056070, value: dob },
       { id: 18249027, value: "Acknowledged" },
     ];
+    if (patientName !== undefined) {
+      out.push({ id: 18235376, value: patientName });
+      out.push({ id: 13992148, value: patientName });
+    }
+    if (dob !== undefined) {
+      out.push({ id: 18235377, value: dob });
+      out.push({ id: 14056070, value: dob });
+    }
+    if (address !== undefined) out.push({ id: 18235378, value: address });
+    return out;
   }
 
   // HAIRLOSS (76386980, 76387044)
   if (["76386980", "76387044"].includes(apptId)) {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16440628, value: "yes" },
-      { id: 16762638, value: dob },
-      { id: 16763392, value: address },
-      { id: 16736078, value: "Hair Loss" },
     ];
+    if (dob !== undefined) out.push({ id: 16762638, value: dob });
+    if (address !== undefined) out.push({ id: 16763392, value: address });
+    out.push({ id: 16736078, value: "Hair Loss" });
+    return out;
   }
 
   // NUTRITION/WEIGHT MGMT (88945263, 90895435, 90895750, 90895811)
   if (["88945263", "90895435", "90895750", "90895811"].includes(apptId)) {
-    return [
+    const out: AcuityFormField[] = [
       { id: 16440628, value: "yes" },
-      { id: 18227621, value: patientName },
-      { id: 18227624, value: address },
-      { id: 16934757, value: dob },
-      { id: 16934759, value: collected.height || "175" },
-      { id: 16934760, value: collected.weight || "75" },
-      { id: 18227641, value: meds },
-      { id: 18227644, value: collected.allergies || "None known" },
-      { id: 18227645, value: collected.medicalConditions || "None" },
-      { id: 18227676, value: collected.referralSource || "Chat" },
-      { id: 18227662, value: consultType },
     ];
+    if (patientName !== undefined) out.push({ id: 18227621, value: patientName });
+    if (address !== undefined) out.push({ id: 18227624, value: address });
+    if (dob !== undefined) out.push({ id: 16934757, value: dob });
+    if (collected.height !== undefined) out.push({ id: 16934759, value: collected.height });
+    if (collected.weight !== undefined) out.push({ id: 16934760, value: collected.weight });
+    if (meds !== undefined) out.push({ id: 18227641, value: meds });
+    if (collected.allergies !== undefined) out.push({ id: 18227644, value: collected.allergies });
+    if (collected.medicalConditions !== undefined) out.push({ id: 18227645, value: collected.medicalConditions });
+    if (collected.referralSource !== undefined) out.push({ id: 18227676, value: collected.referralSource });
+    if (consultType !== undefined) out.push({ id: 18227662, value: consultType });
+    return out;
   }
 
   // Fallback: free-eligibility-style fields.
-  return [
+  const out: AcuityFormField[] = [
     { id: 16440628, value: "yes" },
-    { id: 16762638, value: dob },
-    { id: 16763392, value: address },
-    { id: 16736078, value: consultType },
   ];
+  if (dob !== undefined) out.push({ id: 16762638, value: dob });
+  if (address !== undefined) out.push({ id: 16763392, value: address });
+  if (consultType !== undefined) out.push({ id: 16736078, value: consultType });
+  return out;
 }
 
 interface ServiceConfig {

@@ -291,7 +291,7 @@ describe("mapIntakeFields", () => {
     expect(fieldIds).toContain(14056070);
   });
 
-  it("maps nutrition fields with defaults", () => {
+  it("does NOT default missing optional nutrition fields", () => {
     const fields = mapIntakeFields("nutrition_initial", {
       firstName: "John",
       lastName: "Doe",
@@ -299,9 +299,22 @@ describe("mapIntakeFields", () => {
       address: "123 Main St",
     });
     const byId = Object.fromEntries(fields.map((f) => [f.id, f.value]));
-    expect(byId[16934759]).toBe("175");
-    expect(byId[16934760]).toBe("75");
-    expect(byId[18227676]).toBe("Chat");
+    // height, weight, allergies, medicalConditions, referralSource are optional
+    // and should be OMITTED when absent — never defaulted.
+    expect(byId[16934759]).toBeUndefined();
+    expect(byId[16934760]).toBeUndefined();
+    expect(byId[18227676]).toBeUndefined();
+  });
+
+  it("does NOT default missing dob to 01/01/1990", () => {
+    const fields = mapIntakeFields("free_eligibility", {
+      firstName: "John",
+      lastName: "Doe",
+      // dob intentionally absent
+      address: "123 Main St",
+    });
+    const byId = Object.fromEntries(fields.map((f) => [f.id, f.value]));
+    expect(byId[16762638]).toBeUndefined();
   });
 
   it("throws on unknown service key", () => {
