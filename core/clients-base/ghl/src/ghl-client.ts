@@ -249,6 +249,19 @@ export function createGhlClient(config: GhlClientConfig) {
       return request<unknown>("POST", "/conversations/messages", payload);
     },
 
+    async getConversationId(
+      locationId: string,
+      contactId: string,
+    ): Promise<string | undefined> {
+      const result = await request<{ conversations?: Array<{ id: string }> }>(
+        "GET",
+        "/conversations/search",
+        undefined,
+        { locationId, contactId },
+      );
+      return result.conversations?.[0]?.id;
+    },
+
     async getPipelineOpportunities(
       locationId: string,
       contactId: string,
@@ -387,6 +400,10 @@ export function createShadowGhlClient(config: GhlClientConfig) {
       contactId: string,
     ): Promise<GhlContact> {
       return { id: contactId, locationId } as GhlContact;
+    },
+
+    async getConversationId(): Promise<string | undefined> {
+      return undefined;
     },
 
     async searchContacts(

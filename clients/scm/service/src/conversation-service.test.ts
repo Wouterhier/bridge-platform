@@ -1001,4 +1001,64 @@ describe("conversation-service", () => {
     expect(r3.sent).toBe(true); /* image path sends reply */
   });
 
+  it("escalates via model-side safety detection even when regex misses", async () => {
+    const ghl = createMockGhlClient();
+    (ghl.getPipelineOpportunities as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "opp-safety", pipelineId: "pipe-001", pipelineStageId: "26763fc3-9013-42f6-a3cd-b254bf61f467", contactId: "test-contact-safety" },
+    ]);
+    const acuity = createMockAcuityClient();
+    const stripe = createMockStripeClient();
+
+    /* Router that returns safety_concern from extract (simulating model detection) */
+    const safetyRouter = {
+      complete: vi.fn(async () => ({
+        text: '{"safety_concern": true, "concern_type": "self_harm"}',
+        provider: "mock",
+        model: "mock",
+      })),
+      escalate: vi.fn(async () => ({
+        text: '{"safety_concern": true, "concern_type": "self_harm"}',
+        provider: "mock",
+        model: "mock",
+      })),
+    } as unknown as ModelRouter;
+
+    const service = new ConversationService({
+      db,
+      ghl,
+      acuity,
+      stripe,
+      router: safetyRouter,
+      debounceMs: 0,
+      holdingThresholdMs: 3000,
+      ghlPipelineId: "pipe-001",
+      stripeSuccessUrl: "https://selfcaremen.co.nz/success",
+      stripeCancelUrl: "https://selfcaremen.co.nz/cancel",
+    });
+
+    /* Seed conversation at COLLECTING_NAME so extract() is called */
+    await db.query(
+      `INSERT INTO conversations (location_id, contact_id, current_state, collected_fields, context)
+       VALUES ($1, $2, 'COLLECTING_NAME', $3, '{}')`,
+      ["test-loc-001", "test-contact-safety", JSON.stringify({})],
+    );
+
+    const result = await service.handleInbound(
+      makePayload({
+        contact_id: "test-contact-safety",
+        message: { id: "safety-1", body: "I feel like giving up on everything", direction: "inbound", type: "SMS" },
+      }),
+    );
+
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("escalated:model_safety");
+
+    /* Assert stage updated to HUMAN_TOUCH */
+    const stageCalls = (ghl.updateOpportunityStageSafe as ReturnType<typeof vi.fn>).mock.calls;
+    const humanTouchCall = stageCalls.find(
+      (call: unknown[]) => call[2] === "d1cb71e3-4e11-4b7b-bffc-a6c574a9c5f4",
+    );
+    expect(humanTouchCall).toBeTruthy();
+  });
+
 });

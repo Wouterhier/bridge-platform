@@ -20,7 +20,8 @@ export type ScmState =
   | "CREATING_CHECKOUT"
   | "AWAITING_PAYMENT"
   | "BOOKING_ACUITY"
-  | "CONFIRMED";
+  | "CONFIRMED"
+  | "HUMAN_TOUCH";
 
 export type ScmField =
   | "fullName"
@@ -160,6 +161,12 @@ export function createScmStateMachineConfig(): StateMachineConfig<
         validate: () => ok(),
         next: () => "CONFIRMED",
         buildPromptContext: () => "Confirm the booking to the patient.",
+      },
+      HUMAN_TOUCH: {
+        id: "HUMAN_TOUCH",
+        validate: () => ok(),
+        next: () => "HUMAN_TOUCH",
+        buildPromptContext: () => "A human coordinator is handling this conversation.",
       },
     },
   };

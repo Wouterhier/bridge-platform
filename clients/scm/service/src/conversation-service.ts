@@ -19,6 +19,7 @@ import type { createAcuityClient } from "@romea/acuity-client";
 import { mapIntakeFields } from "@romea/acuity-client";
 import type { createStripeClient } from "@romea/stripe-client";
 import {
+
   markMessageProcessed,
   markMessageSent,
   incrementSendAttempts,
@@ -84,7 +85,7 @@ export function parseInbound(raw: unknown): InboundPayload | null {
     const msgObj = msgRaw as Record<string, unknown>;
     messageBody = (msgObj.body as string) || (msgObj.text as string) || "";
     messageId = (msgObj.id as string) || "";
-    messageType = (msgObj.type as string) || "";
+    messageType = normalizeMessageType(msgObj.type);
     messageDirection = (msgObj.direction as string) || "inbound";
   }
 
@@ -95,12 +96,23 @@ export function parseInbound(raw: unknown): InboundPayload | null {
   if (!messageId) {
     messageId = (payload.messageId as string) || (payload.message_id as string) || "";
   }
+
+  /* GHL workflow webhooks send no message id. Synthesize a stable per-message
+     key from contact + body + 10s time bucket so identical rapid repeats dedupe
+     but a later identical message is allowed. */
+  if (!messageId) {
+    const crypto = require("node:crypto") as typeof import("node:crypto");
+    const bucket = Math.floor(Date.now() / 10000);
+    messageId = "syn-" + crypto
+      .createHash("sha256")
+      .update(`${contactId}|${messageBody}|${bucket}`)
+      .digest("hex")
+      .slice(0, 32);
+  }
   if (!messageType) {
-    messageType =
-      (payload.type as string) ||
-      (payload.messageType as string) ||
-      (payload.message_type as string) ||
-      "";
+    messageType = normalizeMessageType(
+      payload.type ?? payload.messageType ?? payload.message_type,
+    );
   }
 
   return {
@@ -387,6 +399,21 @@ async function tryExtract(
 /* re-export for backward compat — moved to @romea/bridge-db */
 export { recoverUnsentReplies } from "@romea/bridge-db";
 
+/* GHL / LeadConnector standard message type IDs (numeric).
+   Source: working n8n Inbound-message-type-mapper + GHL docs. */
+const GHL_MESSAGE_TYPE_MAP: Record<number, string> = {
+  1: "Email", 2: "SMS", 3: "GMB", 11: "FB", 12: "Call",
+  18: "IG", 19: "WhatsApp", 29: "Live_Chat",
+};
+
+function normalizeMessageType(rawType: unknown): string {
+  if (typeof rawType === "number") return GHL_MESSAGE_TYPE_MAP[rawType] ?? "SMS";
+  const s = String(rawType ?? "").trim();
+  if (/^\d+$/.test(s)) return GHL_MESSAGE_TYPE_MAP[parseInt(s, 10)] ?? "SMS";
+  return s;
+}
+
+
 /* ------------------------------------------------------------------ */
 /*  URL sanitisation                                                   */
 /* ------------------------------------------------------------------ */
@@ -404,7 +431,7 @@ function stripPaymentUrls(text: string): string {
 export type InboundClassification = 'text' | 'image' | 'system' | 'malformed';
 
 export function classifyInbound(message: InboundMessage): InboundClassification {
-  if (!message?.id) return 'malformed';
+  if (!message) return 'malformed';
   const type = (message.type || '').toLowerCase();
   if (!message.body || message.body.trim() === '') {
     if (type.includes('image') || type.includes('attachment') || type.includes('file')) return 'image';
@@ -556,6 +583,26 @@ export class ConversationService {
       }
     }
 
+    
+    /* 6c. Upsert collected contact fields to GHL (name/phone/email).
+       GHL creates a "Guest Visitor" placeholder; once we have real values,
+       write them back so the CRM contact is correct. Best-effort, non-fatal. */
+    try {
+      const contactPatch: Record<string, string> = {};
+      if (typeof collected.fullName === "string" && collected.fullName.trim()) {
+        const parts = collected.fullName.trim().split(/\s+/);
+        contactPatch.firstName = parts[0];
+        if (parts.length > 1) contactPatch.lastName = parts.slice(1).join(" ");
+      }
+      if (typeof collected.phone === "string" && collected.phone) contactPatch.phone = collected.phone;
+      if (typeof collected.email === "string" && collected.email) contactPatch.email = collected.email;
+      if (Object.keys(contactPatch).length > 0) {
+        await ghl.updateContact(location_id, contact_id, contactPatch);
+      }
+    } catch (err) {
+      process.stderr.write("[conversation-service] contact upsert failed: " + String(err) + "\n");
+    }
+
     /* 7. Handle special states (with holding-message support) */
     if (nextState === "SHOWING_SLOTS") {
       const slotsResult = await this.handleShowingSlots(
@@ -656,7 +703,21 @@ export class ConversationService {
           recoverUnsentReplies() can find and re-deliver on restart.
           Store the FULL SendPayload (GhlMessagePayload + locationId) so recovery has everything it needs. */
     const channel = mapMessageTypeToChannel(message.type);
-    const ghlPayload = buildGhlSendPayload(channel, contact_id, payload.conversation_id, replyText);
+    let convId = payload.conversation_id ?? (conversation.ghl_conversation_id as string | undefined) ?? undefined;
+    if (channel === "live_chat" && !convId) {
+      try {
+        convId = await ghl.getConversationId(location_id, contact_id);
+        if (convId) {
+          await db.query(
+            `UPDATE conversations SET ghl_conversation_id = $1 WHERE id = $2`,
+            [convId, conversation.id],
+          );
+        }
+      } catch (err) {
+        process.stderr.write("[conversation-service] getConversationId failed: " + String(err) + "\n");
+      }
+    }
+    const ghlPayload = buildGhlSendPayload(channel, contact_id, convId, replyText);
     const sendPayload: import("@romea/bridge-db").SendPayload = {
       ...ghlPayload,
       locationId: location_id,
@@ -991,7 +1052,7 @@ export class ConversationService {
     const { db, ghl } = this.deps;
 
     /* Update conversation state */
-    await updateConversation(db, conversation.id, "HUMAN_TOUCH" as any, conversation.collected_fields as ScmCollected, {
+    await updateConversation(db, conversation.id, "HUMAN_TOUCH", conversation.collected_fields as ScmCollected, {
       ...conversation.context,
       escalated: true,
       escalationReason: reason,
@@ -1056,7 +1117,7 @@ export class ConversationService {
           pipelineStageId: targetStageId,
           locationId,
           contactId,
-          name: ((collected.fullName as string) || [(collected as any).firstName, (collected as any).lastName].filter(Boolean).join(" ") || "New Lead"),
+          name: (typeof collected.fullName === "string" && collected.fullName.trim()) || "New Lead",
           status: "open",
         });
       }

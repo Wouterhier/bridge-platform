@@ -23,6 +23,8 @@ export const fallbackMessages: Record<ScmState, string> = {
     "I am finalising your booking in our calendar. One moment please.",
   CONFIRMED:
     "Your appointment is confirmed. If you need to reschedule or have any questions, just let us know.",
+  HUMAN_TOUCH:
+    "A member of our team will be in touch with you shortly.",
 };
 
 export function getFallbackMessage(state: ScmState): string {

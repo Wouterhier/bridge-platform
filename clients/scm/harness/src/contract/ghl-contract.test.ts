@@ -68,4 +68,26 @@ describe.skipIf(SKIP)("GHL contract tests (real API)", () => {
       expect(err.status).toBe(422);
     }
   });
+
+  it("updates opportunity stage with pipelineStageId", async () => {
+    // Find an existing opportunity for the test contact
+    const opportunities = await ghl.getPipelineOpportunities(
+      process.env.GHL_LOCATION_ID!,
+      testContactId,
+      process.env.GHL_PIPELINE_ID!,
+    );
+    expect(opportunities.length).toBeGreaterThan(0);
+
+    const opp = opportunities[0];
+    const originalStage = opp.pipelineStageId;
+    expect(originalStage).toBeTruthy();
+
+    // Update to the same stage (idempotent test) — GHL should return 200
+    const updated = await ghl.updateOpportunityStage(
+      process.env.GHL_LOCATION_ID!,
+      opp.id,
+      originalStage!,
+    );
+    expect(updated).toHaveProperty("pipelineStageId", originalStage);
+  });
 });
