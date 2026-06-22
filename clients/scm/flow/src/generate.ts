@@ -182,7 +182,10 @@ function buildStateInstruction(
   errorKey?: string,
 ): string {
   const parts: string[] = [];
-  const name = (collected.fullName as string | undefined) ?? "";
+  /* Strip GHL placeholder names — treat them as no name collected */
+  const PLACEHOLDER_NAMES = new Set(["guest visitor", "guest", "visitor", "test user", "test", "user"]);
+  const rawName = (collected.fullName as string | undefined) ?? "";
+  const name = PLACEHOLDER_NAMES.has(rawName.toLowerCase().trim()) ? "" : rawName;
 
   switch (state) {
     case "NEW":
@@ -210,11 +213,11 @@ function buildStateInstruction(
         );
       } else {
         parts.push(
-          `Answer their question fully and warmly first — never withhold the answer.${
+          `Answer their question or respond to what they actually said, fully and warmly — never withhold the answer or ignore what they said.${
             contactNudge
-              ? " Then at the end of the same message: " + contactNudge
+              ? " If the conversation flows naturally, add at the end: " + contactNudge + " But if they just asked WHY we need their details, or pushed back, or asked something else entirely — answer THAT first. Do not repeat the contact request if you just asked it and they questioned it; answer their question about it instead (e.g. explain it is just so we can send a confirmation or follow up — completely optional, no pressure)."
               : ""
-          } Giving their details is never a blocker. If they show booking intent, guide them toward choosing a service.`,
+          } This is never a blocker. If they show booking intent, guide them toward choosing a service.`,
         );
       }
       break;
