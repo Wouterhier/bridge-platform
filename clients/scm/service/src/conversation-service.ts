@@ -491,6 +491,7 @@ async function tryExtract(
       if (hint.dob) fields.dobRaw = hint.dob;
       if (hint.serviceKey) fields.serviceKey = hint.serviceKey;
       if (hint.bookingIntent) fields.bookingIntent = true;
+      if (hint.preferredDate) fields.preferredDate = hint.preferredDate;
       return { value: null, safetyConcern, concernType, fields };
     }
     case "SELECTING_SERVICE":
@@ -931,16 +932,26 @@ export class ConversationService {
       return { state: "AWAITING_SELECTION", collected };
     }
 
-    const svc = service as { acuityTypeId: number; calendarId: string | number };
+    const svc = service as { acuityTypeId: number; calendarId?: number };
+
+    /* Date preference: if patient specified a preferred date range, start
+       searching from there. Otherwise default to next calendar month.
+       collected.preferredDate is set by extract() when the patient mentions
+       a date preference ("next week", "July", "after the 10th", etc.).
+       Without preference: start from 1st of next month. */
+    const prefDate = (collected as ScmCollected & { preferredDate?: string }).preferredDate;
+    const searchStart = prefDate
+      ? new Date(prefDate)
+      : (() => { const d = new Date(); d.setMonth(d.getMonth() + 1, 1); return d; })();
 
     async function fetchSlots(): Promise<ReturnType<typeof acuity.getAvailability>> {
-      const base = new Date();
-      for (let i = 1; i <= 14; i++) {
-        const d = new Date(base);
+      /* Search up to 21 days from the preferred/default start date.
+         Do NOT pass calendarID — let Acuity return any available clinician. */
+      for (let i = 0; i <= 21; i++) {
+        const d = new Date(searchStart);
         d.setDate(d.getDate() + i);
         const dateStr = d.toISOString().split("T")[0];
         const slots = await acuity.getAvailability(svc.acuityTypeId, {
-          calendarID: svc.calendarId,
           date: dateStr,
         });
         if (slots.length > 0) return slots;

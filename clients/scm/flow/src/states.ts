@@ -43,6 +43,7 @@ export interface ScmCollected {
   slotFormatted?: string;
   missingFields?: string[];
   bookingIntent?: boolean;
+  preferredDate?: string;   // ISO date string from patient date preference
 }
 
 export interface ScmContext {
@@ -156,8 +157,12 @@ export function createScmStateMachineConfig(): StateMachineConfig<
           if (!cfg) return "SELECTING_SERVICE";
 
           const gate = gateApiCall(cfg.acuityTypeId, collected as Record<string, unknown>);
-          if (gate.ready) return "SHOWING_SLOTS";
-          return "COLLECTING";
+          if (!gate.ready) return "COLLECTING";
+          /* Gate passed — all mandatory fields collected.
+             Before fetching slots, make sure we have a date preference.
+             If not, stay in COLLECTING so the prompt asks for it. */
+          if (!c.preferredDate) return "COLLECTING";
+          return "SHOWING_SLOTS";
         },
         buildPromptContext: (collected) => {
           const c = collected as unknown as ScmCollected;
@@ -166,6 +171,13 @@ export function createScmStateMachineConfig(): StateMachineConfig<
             typeof c.serviceKey === "string"
               ? getService(c.serviceKey)
               : (c.serviceKey as ServiceConfig | undefined);
+
+          /* If gate passes but no preferredDate — ask for timing preference */
+          const cfg2 = cfg as ServiceConfig | undefined;
+          const gate2 = cfg2 ? gateApiCall(cfg2.acuityTypeId, collected as Record<string, unknown>) : { ready: false };
+          if (gate2.ready && !c.preferredDate) {
+            return `Great, I have everything I need to book your ${cfg2?.name ?? "consultation"}. When works best for you? Any preferred week or time of day?`;
+          }
 
           if (!missingText) {
             return `All details collected for ${cfg?.name ?? "the consultation"}. Present available slots.`;

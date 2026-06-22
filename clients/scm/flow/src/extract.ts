@@ -14,6 +14,7 @@ export interface ExtractionHint {
   serviceKey?: string;
   slotIso?: string;
   bookingIntent?: boolean;
+  preferredDate?: string;   // ISO date string (YYYY-MM-DD) derived from patient timing preference
   safety_concern?: boolean;
   concern_type?: string;
 }
@@ -157,10 +158,11 @@ function buildCollectingPrompt(
   return [
     "The patient is in the process of booking a consultation. Extract any missing details they provide in their message.",
     "Return ONLY a JSON object with any of these fields that are present in the message:",
-    '{"firstName": "...", "lastName": "...", "fullName": "...", "phone": "...", "email": "...", "dob": "...", "address": "...", "medications": "...", "medicalHistory": "...", "questions": "..."}',
+    '{"firstName": "...", "lastName": "...", "fullName": "...", "phone": "...", "email": "...", "dob": "...", "address": "...", "medications": "...", "medicalHistory": "...", "questions": "...", "preferredDate": "YYYY-MM-DD"}',
     "",
     "Rules:",
     "- dob: extract any date of birth mentioned, in whatever format. Do not normalize.",
+    "- preferredDate: if the patient mentions a preferred timing (e.g. 'next week', 'July', 'after the 10th', 'as soon as possible', 'next month'), convert to an ISO date (YYYY-MM-DD) representing the START of that period. Today is " + new Date().toISOString().split('T')[0] + ". 'Next month' = first day of next month. 'Next week' = next Monday. 'As soon as possible' = tomorrow. Only include if they actually mentioned a timing preference.",
     "- Only include fields that are actually present in THIS message (or clearly refer to earlier in the conversation).",
     "- If nothing extractable, return {}.",
     `\nStill needed: ${missing.join(", ") || "(none — all collected)"}`,

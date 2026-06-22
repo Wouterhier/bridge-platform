@@ -4,7 +4,7 @@ export interface ServiceConfig {
   name: string;
   duration: number;
   price: number;
-  calendarId: string | number;
+  calendarId: number;   // Acuity integer calendar ID — NOT a GHL calendar ID
   paid: boolean;
 }
 
@@ -24,7 +24,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "TRT Initial Consultation",
     duration: 30,
     price: 179,
-    calendarId: 13780963,
+    calendarId: 9688071,
     paid: true,
   },
   trt_followup: {
@@ -33,7 +33,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "TRT Follow-up",
     duration: 20,
     price: 159,
-    calendarId: "zHtlCGvRDmoj9sCLWGeY",
+    calendarId: 9688071,
     paid: true,
   },
   trt_ontreatment: {
@@ -42,7 +42,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "TRT On-Treatment Follow-up",
     duration: 20,
     price: 159,
-    calendarId: "TBTbgHasT90mKkd6e9HU",
+    calendarId: 9688071,
     paid: true,
   },
   trt_express: {
@@ -51,16 +51,16 @@ export const services: Record<string, ServiceConfig> = {
     name: "TRT Express Follow-up",
     duration: 15,
     price: 99,
-    calendarId: "dqLVbTJi56p8zACVxODp",
+    calendarId: 9688071,
     paid: true,
   },
   ed_initial: {
     key: "ed_initial",
-    acuityTypeId: 53224493,
-    name: "ED Initial Consultation",
+    acuityTypeId: 93360512,
+    name: "ED Express Appointment",
     duration: 30,
     price: 179,
-    calendarId: "7iQocxTR6z7vykgWNPyw",
+    calendarId: 9688071,
     paid: true,
   },
   glp1_initial: {
@@ -69,7 +69,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "GLP-1 Initial Consultation",
     duration: 20,
     price: 119,
-    calendarId: "4vdtC4B6VjJtrHjCLyJi",
+    calendarId: 9688071,
     paid: true,
   },
   glp1_followup: {
@@ -78,7 +78,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "GLP-1 Follow-up",
     duration: 15,
     price: 99,
-    calendarId: "XwJkvuj7NQw6ufmomFkP",
+    calendarId: 9688071,
     paid: true,
   },
   roidcare_initial: {
@@ -87,7 +87,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "RoidCare+ Initial",
     duration: 30,
     price: 179,
-    calendarId: "ZWzPxB1TgBhIZc2QE7lR",
+    calendarId: 9688071,
     paid: true,
   },
   roidcare_followup: {
@@ -96,7 +96,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "RoidCare+ Follow-up",
     duration: 20,
     price: 169,
-    calendarId: "DNH4lqU32ug7q3iMi9ov",
+    calendarId: 9688071,
     paid: true,
   },
   nutrition_initial: {
@@ -105,7 +105,7 @@ export const services: Record<string, ServiceConfig> = {
     name: "Nutrition Initial",
     duration: 30,
     price: 159,
-    calendarId: "Q3bo64shMDdOe1Uv3cj0",
+    calendarId: 13799036,
     paid: true,
   },
   nutrition_followup: {
@@ -114,25 +114,34 @@ export const services: Record<string, ServiceConfig> = {
     name: "Nutrition Follow-up",
     duration: 20,
     price: 129,
-    calendarId: "HBW1ki9DM483Nsps1pmW",
+    calendarId: 13799036,
     paid: true,
   },
   weightmgmt_initial: {
     key: "weightmgmt_initial",
     acuityTypeId: 90895750,
-    name: "Weight Management Initial",
+    name: "Initial Weight Management Consultation",
     duration: 30,
     price: 159,
-    calendarId: "8LM6rrDfbhD1Sosyg15n",
+    calendarId: 10917419,
     paid: true,
   },
   weightmgmt_followup: {
     key: "weightmgmt_followup",
     acuityTypeId: 90895811,
-    name: "Weight Management Follow-up",
+    name: "Follow-up Weight Management Consultation",
     duration: 20,
     price: 129,
-    calendarId: "e9wzLcKdcDzs5MAIVtB0",
+    calendarId: 10917419,
+    paid: true,
+  },
+  hairloss_initial: {
+    key: "hairloss_initial",
+    acuityTypeId: 76386980,
+    name: "Hairloss Initial Consultation",
+    duration: 30,
+    price: 159,
+    calendarId: 9688071,
     paid: true,
   },
 };
