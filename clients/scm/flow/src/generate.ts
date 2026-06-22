@@ -187,14 +187,24 @@ function buildStateInstruction(
   switch (state) {
     case "NEW":
       parts.push(
-        "This is the very first message from the patient. Greet them warmly, let them know in one line you can help them book a consultation or answer questions, and naturally invite them to share their name so you can get started. Respond to whatever they actually said first.",
+        "This is the very first message from the patient. Greet them warmly and respond to whatever they actually said. Then — in the same message — naturally ask for their name AND their phone number together (e.g. 'What's your name and best number to reach you?'). Always ask both together, never name alone.",
       );
       break;
-    case "ENGAGING":
-      parts.push(
-        "This is an open conversation. Answer the patient's questions warmly and helpfully. Build a little rapport. If they show interest in booking, guide them toward choosing a service. Do NOT fire a list of required fields at them. Keep it conversational and low-pressure.",
-      );
+    case "ENGAGING": {
+      const hasName = !!name;
+      const hasPhone = !!(collected as ScmCollected).phone;
+      if (hasName && hasPhone) {
+        parts.push(
+          "You have their name and phone. Answer their question warmly. If they show booking intent, guide them toward choosing a service.",
+        );
+      } else {
+        // Answer first, then softly ask for name+phone together — never block on it
+        parts.push(
+          "Answer their question fully and warmly first — do not withhold the answer. Then, in the same message, softly ask for their name AND phone number together so you can follow up properly (e.g. 'By the way, what's your name and best number?'). Always ask BOTH name and phone together — never name alone, never phone alone. If they already answered a question and just didn't give their details, do not repeat the question — just ask for name+phone. Keep it conversational, low-pressure. Do NOT block them from getting answers.",
+        );
+      }
       break;
+    }
     case "COLLECTING": {
       /* Build explicit already-collected and still-needed lists so the model
          never hallucinates a re-ask for something that is already in DB. */
