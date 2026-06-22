@@ -469,24 +469,26 @@ export async function generate(
     if (confirmedFacts) factsParts.push(confirmedFacts);
   }
 
-  const userContent = [
+  /* Build the instruction block that goes into the system prompt extension.
+     The actual patient message is the LAST user turn in history — the model
+     must reply to that directly. Never bury the patient message inside an
+     instruction block. */
+  const instructionBlock = [
     ...(factsParts.length > 0 ? [factsParts.join("\n\n"), ""] : []),
-    "Your goal for this reply:",
+    "## Your goal for this reply:",
     stateInstruction,
     "",
-    "Remember: respond to the patient as a real, warm coordinator would. Move toward the goal naturally, in conversation. Do not sound like a form.",
-    "",
-    "Conversation so far:",
-    ...compactHistory(history),
-    "",
-    "Generate the next patient-facing message. Return only the message text. Do not include JSON, code fences, or stage labels.",
+    "Rule: your reply MUST directly respond to the patient's last message above. Never ignore what they said. Never open with a generic greeting if they already greeted or asked something. Read what they wrote and reply to it.",
   ].join("\n");
 
+  /* Messages: conversation history first, then a system-role instruction turn,
+     then the generate trigger. The last user message in history IS the patient
+     message we are replying to — it must stay as the final user turn. */
   const messages: HistoryMessage[] = [
     ...history,
     {
-      role: "user",
-      content: userContent,
+      role: "user" as const,
+      content: instructionBlock + "\n\nNow write your reply to the patient's message above. Return only the message text, nothing else.",
     },
   ];
 

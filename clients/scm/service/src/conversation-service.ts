@@ -797,12 +797,20 @@ export class ConversationService {
        - image-attachment response or escalation notice (hardcoded)
        The payment-link append happens AFTER sanitization. */
     /* Fetch recent conversation history so the model doesn't re-ask
-       questions already answered. Last 6 turns (3 exchanges). */
+       questions already answered. Last 6 turns (3 exchanges).
+       Always append the CURRENT patient message as the final user turn
+       so the model is directly replying to what they just said. */
     let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
     try {
       conversationHistory = await fetchConversationHistory(db, contact_id, 6);
     } catch {
       /* non-fatal — fall back to empty history */
+    }
+    /* Append current message if not already last in history (avoids dup on first turn) */
+    const currentMsg = message.body.trim();
+    const lastInHistory = conversationHistory[conversationHistory.length - 1];
+    if (currentMsg && !(lastInHistory?.role === "user" && lastInHistory.content === currentMsg)) {
+      conversationHistory = [...conversationHistory, { role: "user" as const, content: currentMsg }];
     }
 
     let replyText: string;
