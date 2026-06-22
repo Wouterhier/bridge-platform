@@ -194,6 +194,23 @@ function buildStateInstruction(
       const hasPhone = !!(collected as ScmCollected).phone;
       const isNew = state === "NEW";
 
+      /* Detect closing signals — never ask for contact details after these */
+      const histArr = history as unknown as Array<{ role: string; content: string }>;
+      const lastMsg = (histArr[histArr.length - 1]?.content ?? "").toLowerCase().trim();
+      const isClosing = /^(ok|okay|thanks|thank you|thx|cheers|bye|goodbye|no worries|got it|great|cool|sounds good|all good)(\s.*)?$/.test(lastMsg) ||
+        /^(ok thanks|thanks bye|that's all|that's it|no thanks|nope|not now|maybe later|i'll think about it)/.test(lastMsg);
+
+      if (isClosing && (hasName || hasPhone)) {
+        /* They're wrapping up and we already have at least one contact detail — just close warmly */
+        parts.push("Respond warmly to their closing message. Do NOT ask for any contact details. Just leave the door open naturally (e.g. 'No worries, come back anytime').");
+        break;
+      }
+      if (isClosing && !hasName && !hasPhone) {
+        /* Closing with no details at all — still don't push, just close warmly */
+        parts.push("Respond warmly to their closing message. No pressure. A simple warm close is fine. Do NOT ask for contact details.");
+        break;
+      }
+
       // Build the contact nudge — only ask for what is actually missing
       let contactNudge = "";
       if (!hasName && !hasPhone) {
