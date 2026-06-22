@@ -399,9 +399,26 @@ export function sanitizeOutput(
   state?: ScmState,
   collected?: ScmCollected,
 ): string {
+  /* Strip markdown formatting */
+  let sanitized = text
+    /* Strip bold */
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    /* Strip italic */
+    .replace(/\*([^*]+)\*/g, '$1')
+    /* Strip underline */
+    .replace(/__([^_]+)__/g, '$1')
+    /* Strip italic with underscore */
+    .replace(/_([^_]+)_/g, '$1')
+    /* Strip headers */
+    .replace(/^#{1,6}\s+/gm, '')
+    /* Strip bullet dashes at line start */
+    .replace(/^[\-\*]\s+/gm, '')
+    /* Strip emojis */
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '');
+
   /* Enforce style rules that models sometimes ignore */
-  let sanitized = (
-    text
+  sanitized = (
+    sanitized
       /* Replace em dashes and standalone double dashes */
       .replace(/—/g, " - ")
       .replace(/\b--\b/g, " - ")
