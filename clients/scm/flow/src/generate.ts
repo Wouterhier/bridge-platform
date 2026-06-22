@@ -186,21 +186,35 @@ function buildStateInstruction(
 
   switch (state) {
     case "NEW":
-      parts.push(
-        "This is the very first message from the patient. Greet them warmly and respond to whatever they actually said. Then — in the same message — naturally ask for their name AND their phone number together (e.g. 'What's your name and best number to reach you?'). Always ask both together, never name alone.",
-      );
-      break;
     case "ENGAGING": {
       const hasName = !!name;
       const hasPhone = !!(collected as ScmCollected).phone;
-      if (hasName && hasPhone) {
+      const isNew = state === "NEW";
+
+      // Build the contact nudge — only ask for what is actually missing
+      let contactNudge = "";
+      if (!hasName && !hasPhone) {
+        contactNudge = "Softly ask for their name and phone number together (e.g. \"what's your name and best number?\"). Never ask name alone or phone alone when both are missing.";
+      } else if (!hasName) {
+        contactNudge = "You have their phone. Just ask for their name.";
+      } else if (!hasPhone) {
+        contactNudge = `You have their name (${name}). Just ask for their phone number.`;
+      }
+      // else: have both — no nudge needed
+
+      if (isNew) {
         parts.push(
-          "You have their name and phone. Answer their question warmly. If they show booking intent, guide them toward choosing a service.",
+          `Greet them warmly and respond to whatever they actually said.${
+            contactNudge ? " Then in the same message: " + contactNudge : ""
+          } This is never a blocker — if they just want to ask questions that is fine.`,
         );
       } else {
-        // Answer first, then softly ask for name+phone together — never block on it
         parts.push(
-          "Answer their question fully and warmly first — do not withhold the answer. Then, in the same message, softly ask for their name AND phone number together so you can follow up properly (e.g. 'By the way, what's your name and best number?'). Always ask BOTH name and phone together — never name alone, never phone alone. If they already answered a question and just didn't give their details, do not repeat the question — just ask for name+phone. Keep it conversational, low-pressure. Do NOT block them from getting answers.",
+          `Answer their question fully and warmly first — never withhold the answer.${
+            contactNudge
+              ? " Then at the end of the same message: " + contactNudge
+              : ""
+          } Giving their details is never a blocker. If they show booking intent, guide them toward choosing a service.`,
         );
       }
       break;
