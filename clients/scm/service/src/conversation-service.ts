@@ -447,11 +447,18 @@ function mapMessageTypeToChannel(type: string): "sms" | "live_chat" | "whatsapp"
 function buildGhlSendPayload(
   channel: "sms" | "live_chat" | "whatsapp" | "email",
   contactId: string,
-  _conversationId: string | undefined,
+  conversationId: string | undefined,
   message: string,
 ): import("@romea/ghl-client").GhlMessagePayload {
   const typeMap = { sms: "SMS", live_chat: "Live_Chat", whatsapp: "WhatsApp", email: "Email" } as const;
-  return { type: typeMap[channel] ?? "SMS", contactId, message };
+  const type = typeMap[channel] ?? "SMS";
+  /* Live_Chat requires conversationId (not contactId) per GHL API 2021-04-15.
+     Without it GHL returns 404. Include it when available. */
+  const payload: import("@romea/ghl-client").GhlMessagePayload = { type, contactId, message };
+  if (type === "Live_Chat" && conversationId) {
+    (payload as unknown as Record<string, unknown>).conversationId = conversationId;
+  }
+  return payload;
 }
 
 /* ------------------------------------------------------------------ */
