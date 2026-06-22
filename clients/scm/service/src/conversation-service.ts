@@ -488,10 +488,13 @@ async function tryExtract(
     case "ENGAGING":
     case "COLLECTING": {
       const fields: Partial<ScmCollected> = {};
-      if (hint.fullName) {
+      if (hint.fullName && !PLACEHOLDER_NAMES.has(hint.fullName.toLowerCase().trim())) {
         fields.fullName = hint.fullName;
       } else if (hint.firstName && hint.lastName) {
-        fields.fullName = `${hint.firstName} ${hint.lastName}`;
+        const composed = `${hint.firstName} ${hint.lastName}`;
+        if (!PLACEHOLDER_NAMES.has(composed.toLowerCase().trim())) {
+          fields.fullName = composed;
+        }
       }
       if (hint.phone) fields.phone = hint.phone;
       if (hint.email) fields.email = hint.email;
