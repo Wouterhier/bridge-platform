@@ -541,6 +541,30 @@ function stripPaymentUrls(text: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Short link generator                                               */
+/* ------------------------------------------------------------------ */
+
+const _shortLinks = new Map<string, { url: string; expiresAt: number }>();
+const _SHORT_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function makeShortLink(stripeUrl: string): string {
+  let code: string;
+  do {
+    code = Array.from({ length: 6 }, () => _SHORT_CHARS[Math.floor(Math.random() * _SHORT_CHARS.length)]).join("");
+  } while (_shortLinks.has(code));
+  const expiresAt = Date.now() + 30 * 60 * 1000; // 30 min
+  _shortLinks.set(code, { url: stripeUrl, expiresAt });
+  setTimeout(() => _shortLinks.delete(code), 30 * 60 * 1000);
+  return `https://ai.romea.ai/book/scm/${code}`;
+}
+
+export function resolveShortLink(code: string): string | null {
+  const entry = _shortLinks.get(code.toUpperCase());
+  if (!entry || Date.now() > entry.expiresAt) return null;
+  return entry.url;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Inbound message classification                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1081,7 +1105,7 @@ export class ConversationService {
           state: "AWAITING_PAYMENT",
           collected: {
             ...collected,
-            _paymentLink: session.url,
+            _paymentLink: makeShortLink(session.url),
             _stripeSessionId: session.id,
           },
         };
@@ -1153,7 +1177,7 @@ export class ConversationService {
           state: "AWAITING_PAYMENT",
           collected: {
             ...collected,
-            _paymentLink: session.url,
+            _paymentLink: makeShortLink(session.url ?? ""),
             _stripeSessionId: session.id,
           },
         };
@@ -1185,7 +1209,7 @@ export class ConversationService {
         state: "AWAITING_PAYMENT",
         collected: {
           ...collected,
-          _paymentLink: session.url,
+          _paymentLink: makeShortLink(session.url ?? ""),
           _stripeSessionId: session.id,
         },
       };

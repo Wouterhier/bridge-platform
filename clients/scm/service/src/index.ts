@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { resolve } from "node:path";
 import express from "express";
 import { Pool } from "pg";
-import { ConversationService, recoverUnsentReplies, parseInbound } from "./conversation-service.js";
+import { ConversationService, recoverUnsentReplies, parseInbound, resolveShortLink } from "./conversation-service.js";
 import { createGhlClient, createShadowGhlClient } from "@romea/ghl-client";
 import { createAcuityClient, createShadowAcuityClient } from "@romea/acuity-client";
 import { createStripeClient, createShadowStripeClient } from "@romea/stripe-client";
@@ -86,6 +86,15 @@ app.use(express.json());
 app.get("/health", async (_req, res) => {
   const result = await service.health();
   res.status(result.ok ? 200 : 503).json(result);
+});
+
+app.get("/book/scm/:code", (req, res) => {
+  const url = resolveShortLink(req.params.code ?? "");
+  if (!url) {
+    res.status(404).send("This payment link has expired. Please contact SelfCareMen for assistance.");
+    return;
+  }
+  res.redirect(302, url);
 });
 
 app.post("/selfcaremen", async (req, res) => {
