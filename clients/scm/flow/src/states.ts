@@ -191,7 +191,7 @@ export function createScmStateMachineConfig(): StateMachineConfig<
         next: () => "AWAITING_SELECTION",
         buildPromptContext: (collected) => {
           const cfg = collected.serviceKey as ServiceConfig | undefined;
-          return `Present the available appointment times (from the SLOT FACTS block, exactly as written) for ${cfg?.name ?? "selected service"} in a clear, friendly way, and invite them to pick one.`;
+          return `Write ONE short friendly line introducing the available times for ${cfg?.name ?? "the consultation"} and invite them to pick one. Example: "Here are the next available times for you:". Do NOT list the times yourself — the system appends the slot list automatically after your message. Just the intro line.`;
         },
       },
       AWAITING_SELECTION: {
@@ -202,7 +202,7 @@ export function createScmStateMachineConfig(): StateMachineConfig<
         next: () => "COLLECTING",  // collect details after slot picked, before booking
         buildPromptContext: (collected) => {
           const cfg = collected.serviceKey as ServiceConfig | undefined;
-          return `Wait for the patient to select a slot for ${cfg?.name ?? ""}. If they haven't picked one yet, warmly nudge them to choose from the times shown.`;
+          return `The slot list has been shown. Wait for the patient to select one for ${cfg?.name ?? ""}. If they haven't picked yet, warmly nudge them. Do NOT re-list the slots.`;
         },
       },
       CREATING_CHECKOUT: {

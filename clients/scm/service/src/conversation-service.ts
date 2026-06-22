@@ -169,19 +169,16 @@ const NZ_TIMEZONE = "Pacific/Auckland";
 
 function formatSlotForDisplay(isoString: string, timezone: string): string {
   const d = new Date(isoString);
-  return (
-    new Intl.DateTimeFormat("en-NZ", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-      timeZone: timezone,
-    }).format(d) +
-    " " +
-    timezone
-  );
+  // No timezone label — "Pacific/Auckland" is ugly. Just show day + time.
+  return new Intl.DateTimeFormat("en-NZ", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: timezone,
+  }).format(d);
 }
 
 /* ------------------------------------------------------------------ */
