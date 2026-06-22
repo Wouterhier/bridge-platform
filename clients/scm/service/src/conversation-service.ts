@@ -248,6 +248,46 @@ async function isMessageProcessed(db: Pool, messageId: string): Promise<boolean>
   return result.rows[0]?.exists ?? false;
 }
 
+/* Fetch last N conversation turns from processed_messages for history injection.
+   Each row has raw_inbound (patient message) and send_payload.message (assistant reply).
+   Returns alternating user/assistant pairs, oldest first. */
+async function fetchConversationHistory(
+  db: Pool,
+  contactId: string,
+  maxTurns = 6,
+): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  const result = await db.query<{ raw_inbound: Record<string, unknown> | null; send_payload: { message?: string } | null }>(
+    `SELECT raw_inbound, send_payload
+     FROM processed_messages
+     WHERE contact_id = $1
+       AND send_payload IS NOT NULL
+       AND send_payload->>'message' IS NOT NULL
+     ORDER BY processed_at DESC
+     LIMIT $2`,
+    [contactId, maxTurns],
+  );
+  // Rows are newest-first; reverse to get chronological order
+  const rows = result.rows.reverse();
+  const history: Array<{ role: "user" | "assistant"; content: string }> = [];
+  for (const row of rows) {
+    // Extract patient message from raw_inbound
+    const inbound = row.raw_inbound;
+    const patientMsg =
+      (inbound?.message as { body?: string } | undefined)?.body ??
+      (inbound?.body as string | undefined) ??
+      (inbound?.text as string | undefined);
+    if (patientMsg) {
+      history.push({ role: "user", content: patientMsg });
+    }
+    // Assistant reply
+    const assistantMsg = row.send_payload?.message;
+    if (assistantMsg) {
+      history.push({ role: "assistant", content: assistantMsg });
+    }
+  }
+  return history;
+}
+
 async function shouldDebounce(
   db: Pool,
   contactId: string,
@@ -756,12 +796,21 @@ export class ConversationService {
        - holding messages (now sanitized explicitly before send)
        - image-attachment response or escalation notice (hardcoded)
        The payment-link append happens AFTER sanitization. */
+    /* Fetch recent conversation history so the model doesn't re-ask
+       questions already answered. Last 6 turns (3 exchanges). */
+    let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    try {
+      conversationHistory = await fetchConversationHistory(db, contact_id, 6);
+    } catch {
+      /* non-fatal — fall back to empty history */
+    }
+
     let replyText: string;
     try {
       replyText = await generate(
         nextState,
         collected as ScmCollected,
-        [],
+        conversationHistory,
         undefined,
         transition.validationError,
         { router },
