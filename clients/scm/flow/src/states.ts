@@ -172,6 +172,11 @@ export function createScmStateMachineConfig(): StateMachineConfig<
               ? getService(c.serviceKey)
               : (c.serviceKey as ServiceConfig | undefined);
 
+          /* If slots came back empty — apologise and ask for alternative date */
+          if ((collected as Record<string, unknown>)._noSlotsFound) {
+            return `Apologise briefly that no times were available for their preferred date. Ask them to suggest an alternative week or time of day. Keep it warm and reassuring — availability opens up regularly.`;
+          }
+
           /* If gate passes but no preferredDate — ask for timing preference */
           const cfg2 = cfg as ServiceConfig | undefined;
           const gate2 = cfg2 ? gateApiCall(cfg2.acuityTypeId, collected as Record<string, unknown>) : { ready: false };

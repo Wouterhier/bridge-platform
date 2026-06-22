@@ -994,6 +994,13 @@ export class ConversationService {
           iso: s.time,
           formatted: formatSlotForDisplay(s.time, NZ_TIMEZONE),
         }));
+        if (slotMenu.length === 0) {
+          process.stderr.write(`[handleShowingSlots] 0 slots (holding path) contactId=${contactId}\n`);
+          return {
+            state: "COLLECTING" as ScmState,
+            collected: { ...collected, preferredDate: undefined, _noSlotsFound: true } as CollectedWithExtras,
+          };
+        }
         const slotMenuFormatted = slotMenu
           .map((s, i) => `${i + 1}. ${s.formatted}`)
           .join("\n");
@@ -1012,6 +1019,23 @@ export class ConversationService {
       iso: s.time,
       formatted: formatSlotForDisplay(s.time, NZ_TIMEZONE),
     }));
+
+    /* GUARD: never transition to AWAITING_SELECTION with empty slots.
+       Ask the patient to suggest a different date instead. */
+    if (slotMenu.length === 0) {
+      process.stderr.write(
+        `[handleShowingSlots] 0 slots found for contactId=${contactId} serviceKey=${JSON.stringify((collected as ScmCollected).serviceKey)} preferredDate=${(collected as ScmCollected & { preferredDate?: string }).preferredDate}\n`,
+      );
+      return {
+        state: "COLLECTING" as ScmState,
+        collected: {
+          ...collected,
+          preferredDate: undefined,   // clear so prompt asks for new preference
+          _noSlotsFound: true,        // flag so generate() knows to explain
+        } as CollectedWithExtras,
+      };
+    }
+
     const slotMenuFormatted = slotMenu
       .map((s, i) => `${i + 1}. ${s.formatted}`)
       .join("\n");
