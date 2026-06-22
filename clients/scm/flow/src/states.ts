@@ -131,7 +131,7 @@ export function createScmStateMachineConfig(): StateMachineConfig<
         id: "SELECTING_SERVICE",
         requiredField: "serviceKey",
         validate: (raw) => validateService(raw),
-        next: () => "COLLECTING",
+        next: () => "SHOWING_SLOTS",
         buildPromptContext: (collected) => {
           const cfg = collected.serviceKey as ServiceConfig | undefined;
           const c = collected as unknown as ScmCollected;
@@ -158,11 +158,8 @@ export function createScmStateMachineConfig(): StateMachineConfig<
 
           const gate = gateApiCall(cfg.acuityTypeId, collected as Record<string, unknown>);
           if (!gate.ready) return "COLLECTING";
-          /* Gate passed — all mandatory fields collected.
-             Before fetching slots, make sure we have a date preference.
-             If not, stay in COLLECTING so the prompt asks for it. */
-          if (!c.preferredDate) return "COLLECTING";
-          return "SHOWING_SLOTS";
+          /* Gate passed — all mandatory fields collected. Now book. */
+          return cfg.paid ? "CREATING_CHECKOUT" : "BOOKING_ACUITY";
         },
         buildPromptContext: (collected) => {
           const c = collected as unknown as ScmCollected;
@@ -177,15 +174,8 @@ export function createScmStateMachineConfig(): StateMachineConfig<
             return `Apologise briefly that no times were available for their preferred date. Ask them to suggest an alternative week or time of day. Keep it warm and reassuring — availability opens up regularly.`;
           }
 
-          /* If gate passes but no preferredDate — ask for timing preference */
-          const cfg2 = cfg as ServiceConfig | undefined;
-          const gate2 = cfg2 ? gateApiCall(cfg2.acuityTypeId, collected as Record<string, unknown>) : { ready: false };
-          if (gate2.ready && !c.preferredDate) {
-            return `Great, I have everything I need to book your ${cfg2?.name ?? "consultation"}. When works best for you? Any preferred week or time of day?`;
-          }
-
           if (!missingText) {
-            return `All details collected for ${cfg?.name ?? "the consultation"}. Present available slots.`;
+            return `All details collected for ${cfg?.name ?? "the consultation"}. Confirming their booking now.`;
           }
 
           return [
@@ -209,15 +199,7 @@ export function createScmStateMachineConfig(): StateMachineConfig<
         requiredField: "slotIso",
         validate: (raw, collected) =>
           validateSlotSelection(raw, (collected as unknown as ScmCollected).slotMenu ?? []),
-        next: (collected) => {
-          const raw = (collected as unknown as ScmCollected).serviceKey;
-          const cfg: ServiceConfig | undefined =
-            typeof raw === "string" ? getService(raw) : (raw as ServiceConfig | undefined);
-          if (cfg && !cfg.paid) {
-            return "BOOKING_ACUITY";
-          }
-          return "CREATING_CHECKOUT";
-        },
+        next: () => "COLLECTING",  // collect details after slot picked, before booking
         buildPromptContext: (collected) => {
           const cfg = collected.serviceKey as ServiceConfig | undefined;
           return `Wait for the patient to select a slot for ${cfg?.name ?? ""}. If they haven't picked one yet, warmly nudge them to choose from the times shown.`;
