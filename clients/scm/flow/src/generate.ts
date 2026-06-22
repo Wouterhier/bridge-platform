@@ -195,17 +195,42 @@ function buildStateInstruction(
         "This is an open conversation. Answer the patient's questions warmly and helpfully. Build a little rapport. If they show interest in booking, guide them toward choosing a service. Do NOT fire a list of required fields at them. Keep it conversational and low-pressure.",
       );
       break;
-    case "COLLECTING":
+    case "COLLECTING": {
+      /* Build explicit already-collected and still-needed lists so the model
+         never hallucinates a re-ask for something that is already in DB. */
+      const alreadyHave: string[] = [];
+      if (name) alreadyHave.push(`name (${name})`);
+      if ((collected as ScmCollected).phone) alreadyHave.push("phone");
+      if ((collected as ScmCollected).email) alreadyHave.push("email");
+      if ((collected as ScmCollected).dob) alreadyHave.push("date of birth");
+
+      const stillNeed = ((collected as ScmCollected).missingFields ?? []).map((k: string) => ({
+        fullName: "full name",
+        phone: "phone number",
+        email: "email address",
+        dob: "date of birth",
+      }[k] ?? k));
+
       if (errorKey) {
         parts.push(
           "Something they provided didn't look right. Gently and warmly let them know what you need, framed around getting them booked in. Do not be stiff about it.",
         );
       } else {
-        parts.push(
-          "You are collecting the remaining details needed for their booking. Ask naturally, combining questions where possible. Frame everything around helping them get booked in. If they already provided some details earlier, do NOT re-ask them.",
-        );
+        if (alreadyHave.length > 0) {
+          parts.push(
+            `You already have their ${alreadyHave.join(", ")}. DO NOT ask for these again.`,
+          );
+        }
+        if (stillNeed.length > 0) {
+          parts.push(
+            `You still need: ${stillNeed.join(", ")}. Ask naturally, combining where possible. Frame it around getting them booked in.`,
+          );
+        } else {
+          parts.push("All details collected. Present available slots.");
+        }
       }
       break;
+    }
     case "SELECTING_SERVICE":
       parts.push(
         "Now help them choose what they are coming in for. Briefly and warmly mention the main consultation options (use the knowledge base for what SelfCareMen offers), and ask which one fits what they are looking for. If they already hinted at a need earlier, reflect that.",
