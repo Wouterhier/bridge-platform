@@ -98,14 +98,11 @@ function buildSelectedSlotFactsBlock(collected: ScmCollected): string {
 export function buildConfirmedFacts(collected: ScmCollected): string {
   const svc = resolveServiceConfig(collected);
   if (!svc || !collected.slotFormatted) return "";
+  const slotFormatted = (collected.slotFormatted ?? "").replace(/Pacific\/Auckland/g, "").trim();
   return [
-    "--- CONFIRMED BOOKING FACTS ---",
-    `Patient: ${collected.fullName ?? ""}`,
-    `Service: ${svc.name}`,
-    `Date: ${collected.slotFormatted}`,
-    `Duration: ${svc.duration} min`,
-    `Price: ${svc.price === 0 ? "Free" : `NZD $${svc.price}`}`,
-    "--- END CONFIRMED BOOKING FACTS ---",
+    `Name: ${collected.fullName ?? ""}`,
+    `Service: ${svc.name}, ${svc.duration} min, ${svc.price === 0 ? "Free" : `$${svc.price} NZD`}`,
+    `Appointment: ${slotFormatted} (NZT)`,
   ].join("\n");
 }
 
