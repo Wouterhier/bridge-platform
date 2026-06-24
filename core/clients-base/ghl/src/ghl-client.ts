@@ -293,6 +293,20 @@ export function createGhlClient(config: GhlClientConfig) {
       });
     },
 
+    async updateOpportunity(
+      locationId: string,
+      opportunityId: string,
+      patch: Partial<GhlOpportunityPayload>,
+    ): Promise<GhlOpportunity> {
+      return request<GhlOpportunity>(
+        "PUT",
+        `/opportunities/${opportunityId}`,
+        patch,
+        { location_id: locationId },
+        "v3",
+      );
+    },
+
     async updateOpportunityStage(
       locationId: string,
       opportunityId: string,
@@ -472,6 +486,15 @@ export function createShadowGhlClient(config: GhlClientConfig) {
     ): Promise<GhlOpportunity> {
       shadowLog("ghl.createOpportunity", { locationId, payload });
       return { id: "shadow-opp-id", ...payload } as GhlOpportunity;
+    },
+
+    async updateOpportunity(
+      locationId: string,
+      opportunityId: string,
+      patch: Partial<GhlOpportunityPayload>,
+    ): Promise<GhlOpportunity> {
+      shadowLog("ghl.updateOpportunity", { locationId, opportunityId, patch });
+      return { id: opportunityId, ...patch } as GhlOpportunity;
     },
 
     async updateOpportunityStage(

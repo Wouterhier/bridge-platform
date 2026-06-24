@@ -42,5 +42,8 @@ export function createMockGhlClient(): ReturnType<typeof createGhlClient> {
       if (!targetStageId || typeof targetStageId !== "string") throw new Error("GHL mock: updateOpportunityStageSafe requires targetStageId string");
       return { id: `mock-opp-${Date.now()}`, pipelineStageId: targetStageId };
     }),
+    updateOpportunity: vi.fn(async (_locationId: string, _opportunityId: string, _patch: Record<string, unknown>) => {
+      return { id: `mock-opp-${Date.now()}` };
+    }),
   } as unknown as ReturnType<typeof createGhlClient>;
 }

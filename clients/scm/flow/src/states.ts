@@ -169,6 +169,12 @@ export function createScmStateMachineConfig(): StateMachineConfig<
               ? getService(c.serviceKey)
               : (c.serviceKey as ServiceConfig | undefined);
 
+          /* If DOB is ambiguous — ask for clarification */
+          if ((collected as Record<string, unknown>)._dobAmbiguous) {
+            const hint = (collected as Record<string, unknown>)._dobAmbiguousHint as string || 'Could you confirm your date of birth?';
+            return `The date of birth they gave is ambiguous. ${hint} Ask them to clarify warmly and naturally.`;
+          }
+
           /* If slots came back empty — apologise and ask for alternative date */
           if ((collected as Record<string, unknown>)._noSlotsFound) {
             return `Apologise briefly that no times were available for their preferred date. Ask them to suggest an alternative week or time of day. Keep it warm and reassuring — availability opens up regularly.`;

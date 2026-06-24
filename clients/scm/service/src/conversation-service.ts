@@ -493,7 +493,10 @@ async function tryExtract(
           fields.fullName = composed;
         }
       }
-      if (hint.phone) fields.phone = hint.phone;
+      if (hint.phone) {
+        const phoneResult = validatePhone(hint.phone);
+        fields.phone = phoneResult.ok ? phoneResult.value : hint.phone;
+      }
       if (hint.email) fields.email = hint.email;
       if (hint.dob) fields.dobRaw = hint.dob;
       if (hint.serviceKey) fields.serviceKey = hint.serviceKey;
@@ -684,6 +687,14 @@ export class ConversationService {
       const dobResult = normalizeDob(preCollected.dobRaw);
       if (dobResult.ok) {
         preCollected = { ...preCollected, dob: dobResult.value };
+      } else if ('ambiguous' in dobResult && dobResult.ambiguous) {
+        // DOB is ambiguous (e.g. 09/01/92 could be 9 Jan or 1 Sep).
+        // Set flag so the COLLECTING prompt asks a clarifying question.
+        preCollected = {
+          ...preCollected,
+          _dobAmbiguous: true,
+          _dobAmbiguousHint: (dobResult as { hint?: string }).hint ?? 'Could you confirm your date of birth? I want to make sure I have it right.',
+        } as typeof preCollected;
       }
     }
 
@@ -772,6 +783,19 @@ export class ConversationService {
       if (typeof collected.email === "string" && collected.email) contactPatch.email = collected.email;
       if (Object.keys(contactPatch).length > 0) {
         await ghl.updateContact(location_id, contact_id, contactPatch);
+      }
+      /* Also update opportunity name if it was "Guest Visitor *" */
+      if (contactPatch.firstName && typeof collected.fullName === "string" && collected.fullName.trim()) {
+        try {
+          const opps = await ghl.getPipelineOpportunities(location_id, contact_id);
+          for (const opp of opps) {
+            if (opp.name?.toLowerCase().startsWith("guest visitor") || opp.name?.toLowerCase().startsWith("guest ")) {
+              await ghl.updateOpportunity(location_id, opp.id, { name: collected.fullName.trim() });
+            }
+          }
+        } catch (e) {
+          process.stderr.write(`[conversation-service] opportunity name update failed: ${String(e)}\n`);
+        }
       }
     } catch (err) {
       process.stderr.write("[conversation-service] contact upsert failed: " + String(err) + "\n");
