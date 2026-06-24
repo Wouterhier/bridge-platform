@@ -158,7 +158,9 @@ export function createScmStateMachineConfig(): StateMachineConfig<
 
           const gate = gateApiCall(cfg.acuityTypeId, collected as Record<string, unknown>);
           if (!gate.ready) return "COLLECTING";
-          /* Gate passed — all mandatory fields collected. Now book. */
+          /* Also check core contact fields needed for any booking */
+          if (!c.fullName || !c.phone || !c.email) return "COLLECTING";
+          /* All fields present. Book. */
           return cfg.paid ? "CREATING_CHECKOUT" : "BOOKING_ACUITY";
         },
         buildPromptContext: (collected) => {
@@ -188,6 +190,8 @@ export function createScmStateMachineConfig(): StateMachineConfig<
             `To book the ${cfg?.name ?? "consultation"}, you still need: ${missingText}.`,
             "Ask naturally, combining questions where possible. Frame everything around helping them get booked in.",
             "If they already provided some of this in earlier messages, do NOT re-ask it.",
+            "When asking for T&C/privacy agreement, include this link: https://api.romea.ai/lp/selfcaremen/terms.html",
+            "Do NOT use markdown. Plain text only. No stars, no bold, no bullets.",
           ].join(" ");
         },
       },

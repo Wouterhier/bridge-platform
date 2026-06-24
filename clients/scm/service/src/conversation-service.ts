@@ -708,8 +708,14 @@ export class ConversationService {
       if (cfg?.acuityTypeId) {
         const { gateApiCall } = await import("@romea/scm-flow");
         const gate = gateApiCall(cfg.acuityTypeId, preCollected as Record<string, unknown>);
-        if (!gate.ready) {
-          preCollected = { ...preCollected, missingFields: gate.missing.map((f) => f.key) };
+        /* Also check core contact fields (not in Acuity field-spec but required for booking) */
+        const coreMissing: string[] = [];
+        if (!preCollected.fullName || PLACEHOLDER_NAMES.has((preCollected.fullName as string).toLowerCase().trim())) coreMissing.push("fullName");
+        if (!preCollected.phone) coreMissing.push("phone");
+        if (!preCollected.email) coreMissing.push("email");
+        const allMissing = [...coreMissing, ...(gate.ready ? [] : gate.missing.map((f) => f.key))];
+        if (allMissing.length > 0) {
+          preCollected = { ...preCollected, missingFields: allMissing };
         } else {
           preCollected = { ...preCollected, missingFields: [] };
         }
@@ -887,6 +893,8 @@ export class ConversationService {
     if (nextState === "AWAITING_SELECTION") {
       const slotMenu = collected.slotMenuFormatted as string | undefined;
       if (slotMenu) {
+        /* Strip any numbered list the model hallucinated (e.g. "1. 8:40 am\n2. 9:00 am") */
+        replyText = replyText.replace(/\n(\d+\.\s+.+?(am|pm|AM|PM).*\n?)+/g, "").trimEnd();
         replyText = `${replyText}\n\n${slotMenu}`;
       }
     }
