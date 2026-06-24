@@ -181,9 +181,11 @@ function buildStateInstruction(
 ): string {
   const parts: string[] = [];
   /* Strip GHL placeholder names — treat them as no name collected */
-  const PLACEHOLDER_NAMES = new Set(["guest visitor", "guest", "visitor", "test user", "test", "user"]);
+  const PLACEHOLDER_PREFIXES = ["guest visitor", "guest ", "visitor ", "test user", "test ", "user "];
   const rawName = (collected.fullName as string | undefined) ?? "";
-  const name = PLACEHOLDER_NAMES.has(rawName.toLowerCase().trim()) ? "" : rawName;
+  const nameLower = rawName.toLowerCase().trim();
+  const isPlaceholder = PLACEHOLDER_PREFIXES.some(p => nameLower === p.trim() || nameLower.startsWith(p));
+  const name = isPlaceholder ? "" : rawName;
 
   switch (state) {
     case "NEW":
