@@ -257,9 +257,14 @@ function buildStateInstruction(
           "Something they provided didn't look right. Gently and warmly let them know what you need, framed around getting them booked in. Do not be stiff about it.",
         );
       } else {
+        if (name) {
+          parts.push(
+            `Use their name (${name}) naturally in your reply to confirm you have it. Example: "Great, ${name}, let me get you sorted." or "Thanks ${name}, just need a couple more things." This confirms you received the name so they can correct it if wrong.`,
+          );
+        }
         if (alreadyHave.length > 0) {
           parts.push(
-            `You already have their ${alreadyHave.join(", ")}. DO NOT ask for these again.`,
+            `You already have: ${alreadyHave.join(", ")}. DO NOT ask for these again.`,
           );
         }
         if (stillNeed.length > 0) {
@@ -267,7 +272,7 @@ function buildStateInstruction(
             `You still need: ${stillNeed.join(", ")}. Ask naturally, combining where possible. Frame it around getting them booked in.`,
           );
         } else {
-          parts.push("All details collected. Present available slots.");
+          parts.push("All details collected. Confirming booking now.");
         }
       }
       break;
