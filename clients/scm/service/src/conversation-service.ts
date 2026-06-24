@@ -885,7 +885,8 @@ export class ConversationService {
         transition.validationError,
         { router },
       );
-    } catch {
+    } catch (genErr) {
+      process.stderr.write(`[generate] FAILED for state=${nextState} contact=${contact_id}: ${String(genErr)}\n`);
       replyText = getFallbackMessage(nextState);
     }
 
