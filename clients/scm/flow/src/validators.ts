@@ -3,7 +3,6 @@ import { getService, services, type ServiceConfig } from "./services.js";
 
 const FAKE_DOMAINS = new Set([
   "example.com",
-  "test.com",
   "localhost",
   "selfcaremen.booking",
 ]);

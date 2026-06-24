@@ -177,6 +177,7 @@ function buildStateInstruction(
   state: ScmState,
   collected: ScmCollected,
   errorKey?: string,
+  history: Array<{ role: string; content: string }> = [],
 ): string {
   const parts: string[] = [];
   /* Strip GHL placeholder names — treat them as no name collected */
@@ -486,7 +487,7 @@ export async function generate(
 ): Promise<string> {
   const kb = loadKnowledgeBase(options.kbPath);
   const system = buildSystemPrompt(kb, state);
-  const stateInstruction = buildStateInstruction(state, collected, errorKey);
+  const stateInstruction = buildStateInstruction(state, collected, errorKey, history as Array<{ role: string; content: string }>);
 
   /* Build injected facts blocks */
   const factsParts: string[] = [];
