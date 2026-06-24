@@ -306,7 +306,11 @@ async function shouldDebounce(
 /*  Webhook seeding                                                    */
 /* ------------------------------------------------------------------ */
 
-const PLACEHOLDER_NAMES = new Set(["guest visitor", "guest", "visitor", "test user", "test", "user"]);
+const PLACEHOLDER_PREFIXES = ["guest visitor", "guest ", "visitor ", "test user", "test ", "user "];
+function isPlaceholderName(name: string): boolean {
+  const lower = name.toLowerCase().trim();
+  return PLACEHOLDER_PREFIXES.some(p => lower === p.trim() || lower.startsWith(p));
+}
 
 function seedFromWebhook(raw: Record<string, unknown>): Partial<ScmCollected> {
   const seeded: Partial<ScmCollected> = {};
@@ -323,7 +327,7 @@ function seedFromWebhook(raw: Record<string, unknown>): Partial<ScmCollected> {
       ? `${raw.firstName as string} ${raw.lastName as string}`.trim()
       : undefined);
 
-  if (fullName && !PLACEHOLDER_NAMES.has(fullName.toLowerCase().trim())) {
+  if (fullName && !isPlaceholderName(fullName)) {
     seeded.fullName = fullName.trim();
   }
 
@@ -485,11 +489,11 @@ async function tryExtract(
     case "ENGAGING":
     case "COLLECTING": {
       const fields: Partial<ScmCollected> = {};
-      if (hint.fullName && !PLACEHOLDER_NAMES.has(hint.fullName.toLowerCase().trim())) {
+      if (hint.fullName && !isPlaceholderName(hint.fullName)) {
         fields.fullName = hint.fullName;
       } else if (hint.firstName && hint.lastName) {
         const composed = `${hint.firstName} ${hint.lastName}`;
-        if (!PLACEHOLDER_NAMES.has(composed.toLowerCase().trim())) {
+        if (!isPlaceholderName(composed)) {
           fields.fullName = composed;
         }
       }
@@ -710,7 +714,7 @@ export class ConversationService {
         const gate = gateApiCall(cfg.acuityTypeId, preCollected as Record<string, unknown>);
         /* Also check core contact fields (not in Acuity field-spec but required for booking) */
         const coreMissing: string[] = [];
-        if (!preCollected.fullName || PLACEHOLDER_NAMES.has((preCollected.fullName as string).toLowerCase().trim())) coreMissing.push("fullName");
+        if (!preCollected.fullName || isPlaceholderName(preCollected.fullName as string)) coreMissing.push("fullName");
         if (!preCollected.phone) coreMissing.push("phone");
         if (!preCollected.email) coreMissing.push("email");
         const allMissing = [...coreMissing, ...(gate.ready ? [] : gate.missing.map((f) => f.key))];
@@ -740,6 +744,18 @@ export class ConversationService {
 
     let nextState = transition.state;
     let collected = transition.collected as CollectedWithExtras;
+
+    /* Preserve DOB ambiguity flag through state transition */
+    const dobAmbiguous = (preCollected as Record<string, unknown>)._dobAmbiguous;
+    const dobHint = (preCollected as Record<string, unknown>)._dobAmbiguousHint;
+    if (dobAmbiguous && !collected.dob) {
+      collected = { ...collected, _dobAmbiguous: true, _dobAmbiguousHint: dobHint } as typeof collected;
+    }
+    /* Clear ambiguity flag once DOB is resolved */
+    if (collected.dob && (collected as Record<string, unknown>)._dobAmbiguous) {
+      delete (collected as Record<string, unknown>)._dobAmbiguous;
+      delete (collected as Record<string, unknown>)._dobAmbiguousHint;
+    }
 
     /* Structured log for every state transition */
     const transitionedField =
